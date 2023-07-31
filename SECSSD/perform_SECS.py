@@ -11,7 +11,9 @@ def R_from_inertial_to_coord(lat, lon):
     '''
     This function computes the DCM rotation matrix from the inertial frame to a body frame, located at a specific
     lat/lon point. The body frame is assumed to be (north - east - down).
+    lat/lon are in radians
 
+    this function is internal to perform_SECS.py
     '''
     # define the R2 rotation matrix (about 2 axis)
     R2 = lambda angle : np.array([ (np.cos(angle), 0, -np.sin(angle)),
@@ -24,7 +26,7 @@ def R_from_inertial_to_coord(lat, lon):
                                   (0, 0, 1)
         ])
     
-    # compute the DCM from inertial to body, [BN]
+    # compute the DCM from inertial to body, [Body <-- iNertial]
     BN = R2(-90 * np.pi/180) @ R2(-lat) @ R3(lon)
     return BN
 
@@ -35,6 +37,7 @@ def cartesian_from_latlon(lat, lon):
     cartesian coordinates with this, expressed in inertial coordinates.
     (lat) x (lon) are in radians
 
+    this function is internal to perform_SECS.py
     '''
     # get inertial components
     x = np.cos(lon) * np.sin(np.pi/2 - lat)
@@ -50,6 +53,8 @@ def compute_theta_star(r1_N, r2_N):
     computes the angular separation between two unit vectors, r1 and r2 (given in inertial coordinates)
     r1 and r2 MUST be unit vectors. keeping them unit improves computation time
     VECTORIZED
+    
+    this function is internal to perform_SECS.py
     '''
     r2 = r2_N.transpose()
     dot_product = np.dot(r1_N, r2)
@@ -69,6 +74,8 @@ def compute_ehat_phi_frame_N(r1_N, r_p_N, dot_product):
     ehat_phi is computed and returned in inertial coordinates, relative to the earth, NOT the pole sphere.
     mind those coordinate frames...
     VECTORIZED
+    
+    this function is internal to perform_SECS.py
     '''
     
     size_pos = np.size(r1_N, 0)
@@ -93,36 +100,53 @@ def compute_ehat_phi_frame_N(r1_N, r_p_N, dot_product):
 
 def run_secs(radar_velocity_radarframe, velocity_latlon, radar_latlon, radar_index, pred_latlon, poles_latlon, epsilon):
     '''
-    Inputs:
+    this is the main function to call from any script to run the spherical elementary current system method.
+    the SECS method places many divergence free poles (in this implementation), and it attempts to find a least-effort solution to the overdetermined or underdetermined
+    problem of fitting scaling factors to these poles to reproduce a set of input vectors. it accomplishes this solution by utilizing a truncated
+    singular value decomposition, with the cutoff parameter defined by epsilon, and using this to solve for the scaling factors. once the scaling factors are computed,
+    the reconstructed divergence free velocity field can be computed and outputted.
+    
+    this is a mathematical model. there is no physics, nor is there anything "smart" about it. it is just math, eigenvalues, and fancy linear algebra. therefore, care
+    must be taken to ensure that the SECS model does not invent false, spurrious details in the reconstructed vectorfield. the SECS model will solve just about any
+    linear system you give it, so make sure to give it a good one.
+    
+    if, for example, you give it input velocities containing ground scatter, it WILL fit large flow velocities next to nearly stationaly "flow (in actuality, ground scatter)",
+    and the resulting reconstructed vectorfield will look terrible. there will be large gradients in flow velocity over short distances because that is what
+    the model was told to fit. there is no ability for this model, as it is coded here, to filter out "bad" input observations, nor does it weigh any inputs.
+    
+    INPUTS:
         radar_velocity_radarframe: These are the velocities that the radars see, in the frame of the radar (North - East - Down).
-            Size: (num of radar velocities) x (components: 2)
+            Size: (num of radar velocities) x (components: 3)
             
         velocity_latlonR: Coordinates of the velocity points that the radars are sampling
-            Size: (num of radar velocities) x (coord, 3: lat, lon)
+            Size: (num of radar velocities) x (coord, 2: lat, lon)
         
         radar_latlonR: radar locations
-            Size: (num of radars) x (coord, 3: lat, lon)
+            Size: (num of radars) x (coord, 2: lat, lon)
         
         radar_index: the indicies that correspond to radar_velocity_radarframe to tell which radar. Since radar_velocity_radarframe is relative
         to the radar frame, the specific radar must be known to know the coordinate frame
             Size: (num of radar velocities) x (1)
             
         pred_latlonR: prediction locations
-            Size: (num of prediction locations) x (coord, 3: lat, lon)
+            Size: (num of prediction locations) x (coord, 2: lat, lon)
         
         poles_latlonR: SECS pole locatoins
-            Size: (num of SECS poles) x (coord, 3: lat, lon)
+            Size: (num of SECS poles) x (coord, 2: lat, lon)
             
+    OUTPUTS:
+        pred_data_frame_pr - the list of velocity vectors at the prediction locations that are computed from the SECS method
+            dims: [number of prediction velocity x 3 (x, y, z)]
     '''
 
-    # convert all coordinates to radians to speed up computation
+    # convert all coordinates to radians
     velocity_latlon = velocity_latlon * np.pi/180
     radar_latlon = radar_latlon * np.pi/180
     pred_latlon = pred_latlon * np.pi/180
     poles_latlon = poles_latlon * np.pi/180
     
     # radius_I is radius of the velocity_latlon points. this is assumed to be CONSTANT (change??)
-    R_earth = 6371e3 # radius of earth in m
+    R_earth = 6371e3 # radius of earth in meter
     radius_I = R_earth
     
     # pre-compute the cartesian vectors for all the lat/lon positions
@@ -146,7 +170,6 @@ def run_secs(radar_velocity_radarframe, velocity_latlon, radar_latlon, radar_ind
     
     # compute the ehat_phi (longitude) vector in inertial frame of a SECS sphere with +z pole located at SECS_latlon at
     # location specified by r1_N, also in inertial coordinates
-    # this might not be correct. i think it is, but if the code does not work, check here first
     ehat_phi_frame_N = compute_ehat_phi_frame_N(r_i_frame_N, r_p_frame_N, dot_product)
 
     # determine what velocity points line up with which radars. use radar_index to do this.
@@ -154,7 +177,8 @@ def run_secs(radar_velocity_radarframe, velocity_latlon, radar_latlon, radar_ind
     index_change = np.insert(index_change, 0, 0)
     index_change = np.append(index_change, size_i)
     
-    # compute [NR], which is the DCM that transforms from the radar frame to inertial frame    
+    # compute [NR], which is the DCM that transforms from the radar frame to inertial frame
+    # [iNertial <-- Radar]
     NR = np.zeros([size_i, 3, 3])
     counter = 0
     for k in range(size_k):
@@ -162,6 +186,7 @@ def run_secs(radar_velocity_radarframe, velocity_latlon, radar_latlon, radar_ind
         if not(np.any(k == radar_index)):
             continue
         
+        # set the DCM for radar to inertial
         NR[index_change[counter]:index_change[counter+1], :, :] = R_from_inertial_to_coord(radar_latlon[k, 0], radar_latlon[k, 1]).transpose()
         counter = counter + 1
     
@@ -219,7 +244,7 @@ def run_secs(radar_velocity_radarframe, velocity_latlon, radar_latlon, radar_ind
     size_p = np.size(pred_latlon, 0)
     
     # use a for loop to compute the DCMs. this is slow and should be optimized
-    # DCM from inertial frame to prediction frame
+    # DCM from inertial frame to prediction frame [PRedict <-- iNetial]
     PRN = np.zeros([size_p, 3, 3])
     for p in range(size_p):
         PRN[p, :, :] = R_from_inertial_to_coord(pred_latlon[p, 0], pred_latlon[p, 1])
