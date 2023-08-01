@@ -7,11 +7,8 @@ Created on Mon Jul 31 12:36:37 2023
 
 import os
 
-import numpy as np
 from datetime import datetime
 import time
-import cartopy.crs as ccrs
-from cartomap import geogmap as gm
 import matplotlib.pyplot as plt
 
 # import superDARN SECS 
@@ -19,10 +16,11 @@ import SECSSD as SD
 
 
 # input directory containing one day superDARN data (only one day currently, and as many files as there are radars)
-superDARN_data_directory = "superDARN_data_input_directory\\"
+superDARN_data_directory = "superDARN_data_input_directory" + os.sep
 
 # directory to save the data
-savedir = "output_figures\\"
+save = 0
+savedir = "output_figures" + os.sep
 
 
 # define the starting time and ending time.
@@ -41,7 +39,6 @@ prediction_latlim = [45, 75]
 prediction_lonlim = [-160, -30]
 prediction_lat_step = 2
 prediction_lon_step = 3
-
 # obtain prediction latitude and longitude locations
 prediction_latlon = SD.place_prediction(prediction_latlim, prediction_lonlim, prediction_lat_step, prediction_lon_step)
 
@@ -76,9 +73,6 @@ for i, select_time in enumerate(all_time):
     (prediction_velocity_close, prediction_velocity_far, prediction_latlon_close, prediction_latlon_far) = \
     SD.compute_close_and_far(prediction_velocity_frame_pr, prediction_latlon, select_velocity_latlon)
 
-
-
-
     '''
     plotting section
     '''    
@@ -88,53 +82,66 @@ for i, select_time in enumerate(all_time):
     fig_lonlim = prediction_lonlim
     scale = 30000
     
+    fig = plt.figure(figsize=[8,8])
+    ax1 = fig.add_subplot(211)
+    ax2 = fig.add_subplot(212)
     # plot the input velocity measurements from SuperDARN
-    fig, ax1 = gm.plotCartoMap(figsize=[fig_size, fig_size], projection='lambert',
-                              parallels=np.arange(0,90.1, 10), meridians=np.arange(-130,-30,20),
-                              latlim=fig_latlim, lonlim=fig_lonlim,
-                              resolution='50m',
-                              states=False,
-                              title=select_time,
-                              background_color='w',
-                              border_color='k'
-                              )
-    
+#    fig, ax1 = gm.plotCartoMap(figsize=[fig_size, fig_size], projection='lambert',
+#                              parallels=np.arange(0,90.1, 10), meridians=np.arange(-130,-30,20),
+#                              latlim=fig_latlim, lonlim=fig_lonlim,
+#                              resolution='50m',
+#                              states=False,
+#                              title=select_time,
+#                              background_color='w',
+#                              border_color='k'
+#                              )
     # plot input measurements
+#    ax1.quiver(select_velocity_latlon[::skip, 1], select_velocity_latlon[::skip, 0], select_velocity[::skip, 1], select_velocity[::skip, 0],
+#              transform=ccrs.PlateCarree(), color="b", 
+#              width=0.001, scale=scale)
     ax1.quiver(select_velocity_latlon[::skip, 1], select_velocity_latlon[::skip, 0], select_velocity[::skip, 1], select_velocity[::skip, 0],
-              transform=ccrs.PlateCarree(), color="b", 
-              width=0.001, scale=scale)
-    
+              color="b", width=0.001, scale=scale)
+    ax1.set_xlim(prediction_lonlim)
+    ax1.set_ylim(prediction_latlim)
+    ax1.grid(axis='both')
     # save the figure
-    if not os.path.exists(savedir):
-        import subprocess
-        subprocess.call('mkdir "{}"'.format(savedir), shell=True)
-    fig.savefig(savedir + "_input" + "{}.png".format(select_time.strftime("%Y%m%d_%H%M")), dpi=200)
-    plt.close(fig)
+#    if not os.path.exists(savedir):
+#        import subprocess
+#        subprocess.call('mkdir "{}"'.format(savedir), shell=True)
+#    fig.savefig(savedir + "_input" + "{}.png".format(select_time.strftime("%Y%m%d_%H%M")), dpi=200)
+#    plt.close(fig)
     
     # plot the predicted plasma convection from SECS model
-    fig, ax2 = gm.plotCartoMap(figsize=[fig_size, fig_size], projection='lambert',
-                              parallels=np.arange(0,90.1, 10), meridians=np.arange(-130,-30,20),
-                              latlim=fig_latlim, lonlim=fig_lonlim,
-                              resolution='50m',
-                              states=False,
-                              title=select_time,
-                              background_color='w',
-                              border_color='k'
-                              )
+#    fig, ax2 = gm.plotCartoMap(figsize=[fig_size, fig_size], projection='lambert',
+#                              parallels=np.arange(0,90.1, 10), meridians=np.arange(-130,-30,20),
+#                              latlim=fig_latlim, lonlim=fig_lonlim,
+#                              resolution='50m',
+#                              states=False,
+#                              title=select_time,
+#                              background_color='w',
+#                              border_color='k'
+#                              )
     
     # plot close vectors
-    ax2.quiver(prediction_latlon_close[::skip, 1], prediction_latlon_close[::skip, 0], prediction_velocity_close[::skip, 1], prediction_velocity_close[::skip, 0], 
-              transform=ccrs.PlateCarree(), color="b", 
-              width=0.002, scale=scale)
-
+#    ax2.quiver(prediction_latlon_close[::skip, 1], prediction_latlon_close[::skip, 0], prediction_velocity_close[::skip, 1], prediction_velocity_close[::skip, 0], 
+#              transform=ccrs.PlateCarree(), color="b", 
+#              width=0.002, scale=scale)
     # plot far vectors
-    ax2.quiver(prediction_latlon_far[::skip, 1], prediction_latlon_far[::skip, 0], prediction_velocity_far[::skip, 1], prediction_velocity_far[::skip, 0], 
-              transform=ccrs.PlateCarree(), color="k", 
-              width=0.001, scale=scale)
+#    ax2.quiver(prediction_latlon_far[::skip, 1], prediction_latlon_far[::skip, 0], prediction_velocity_far[::skip, 1], prediction_velocity_far[::skip, 0], 
+#              transform=ccrs.PlateCarree(), color="k", 
+#              width=0.001, scale=scale)
     
+    ax2.quiver(prediction_latlon_close[::skip, 1], prediction_latlon_close[::skip, 0], prediction_velocity_close[::skip, 1], prediction_velocity_close[::skip, 0], 
+              color="b", width=0.002, scale=scale)
+    ax2.quiver(prediction_latlon_far[::skip, 1], prediction_latlon_far[::skip, 0], prediction_velocity_far[::skip, 1], prediction_velocity_far[::skip, 0], 
+              color="k", width=0.001, scale=scale)
+    ax2.set_xlim(prediction_lonlim)
+    ax2.set_ylim(prediction_latlim)
+    ax2.grid(axis='both')
     # save the SECS model prediction
-    if not os.path.exists(savedir):
-        import subprocess
-        subprocess.call('mkdir "{}"'.format(savedir), shell=True)
-    fig.savefig(savedir + "_SECS" + "{}.png".format(select_time.strftime("%Y%m%d_%H%M")), dpi=200)
-    plt.close(fig)
+    if save:
+        if not os.path.exists(savedir):
+            import subprocess
+            subprocess.call('mkdir "{}"'.format(savedir), shell=True)
+        fig.savefig(savedir + "_SECS" + "{}.png".format(select_time.strftime("%Y%m%d_%H%M")), dpi=200)
+        plt.close(fig)
