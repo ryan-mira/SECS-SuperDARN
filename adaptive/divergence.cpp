@@ -28,7 +28,7 @@ int main(int argc, char* argv[]) {
         velocityField[i] = vec;
     }
 
-    // Use WLS engine with monomials up to cubic order
+    // Use WLS engine with monomials up to quadratic order
     // Compute the shapes and construct an explicit operator from the storage
     WLS<Monomials<Vec3d>, NoWeight<Vec3d>, ScaleToFarthest> wls(2);
     auto storage = domain.computeShapes(wls);

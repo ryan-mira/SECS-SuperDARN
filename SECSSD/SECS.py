@@ -17,8 +17,6 @@ import os
 from datetime import datetime, timedelta
 import time
 
-import pnpwrapper
-
 from .perform_SECS import run_secs
 
 
