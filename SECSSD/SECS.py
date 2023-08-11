@@ -350,11 +350,11 @@ def predict_with_SECS(radar_velocity_radarframe, velocity_latlon, radar_latlon, 
     '''
     
     # check that the poles do not coincide with a velocity measurement or a prediciton location
-    bool_1 = abs(poles_latlon[:, [0]] - velocity_latlon[:, [0]].transpose()) < 0.01
-    bool_2 = abs(poles_latlon[:, [1]] - velocity_latlon[:, [1]].transpose()) < 0.01
+    bool_1 = abs(poles_latlon[:, [0]] - velocity_latlon[:, [0]].transpose()) < 0.05
+    bool_2 = abs(poles_latlon[:, [1]] - velocity_latlon[:, [1]].transpose()) < 0.05
     
-    bool_3 = abs(poles_latlon[:, [0]] - pred_latlon[:, [0]].transpose()) < 0.01
-    bool_4 = abs(poles_latlon[:, [1]] - pred_latlon[:, [1]].transpose()) < 0.01
+    bool_3 = abs(poles_latlon[:, [0]] - pred_latlon[:, [0]].transpose()) < 0.05
+    bool_4 = abs(poles_latlon[:, [1]] - pred_latlon[:, [1]].transpose()) < 0.05
     
     bool_overlap = np.logical_or(np.any(np.logical_and(bool_1, bool_2), 1), np.any(np.logical_and(bool_3, bool_4), 1))
     
