@@ -113,7 +113,7 @@ def poissonDiskSampling(latlon, lat_min, lat_max, lon_min, lon_max, radius, k=30
     '''
     
     # Pick initial (active) point
-    np.random.seed(2) # TEMPORARY!!!!
+    #np.random.seed(2) # TEMPORARY!!!! put here for debugging purposes
     # linearly interpolate between the latitude and longitude limits, respectively
     coords = np.zeros((2, 1))
     coords[0] = np.random.random() * (lat_max - lat_min) + lat_min # latitude

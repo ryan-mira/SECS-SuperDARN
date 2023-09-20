@@ -30,7 +30,7 @@ from scipy.io import savemat
 # TEMP
 
 
-def geographic_azimuth_to_radarframe(vector_magnitude, azimuth, direction):
+def geographic_azimuth_to_velframe(vector_magnitude, azimuth, direction):
     
     '''
     this function converts the velocity magnitude and radar boresight direction and computes
@@ -38,9 +38,11 @@ def geographic_azimuth_to_radarframe(vector_magnitude, azimuth, direction):
     radar frame is defined to be (N)orth - (E)ast - (D)own -- NED
     
     this function is internal to SECS.py, and it does not need to be called outside it
-    '''
     
-    # azimuth is angle from north, going clockwise (negative)
+    azimuth is RELATIVE TO THE VELOCITY LAT/LON POINT!
+    the bearing of a geodetic line will be different on point A compared to point B...
+    this has already been accounted for in the superDARN data files
+    '''
     # convert azimuth to radians
     azimuth = azimuth * np.pi/180
     
@@ -162,7 +164,7 @@ def read_superDARN(directory, datatype, start_time = "none", end_time = "none", 
                 g_azimuth_angle = bearing_select[beam_number_select]
             
                 # compute velocity in N-E-D frame
-                vel_radar = geographic_azimuth_to_radarframe(vel_select, g_azimuth_angle, -1 * np.ones(np.shape(vel_select))) # negative one is necessary to maintain proper direction
+                vel_radar = geographic_azimuth_to_velframe(vel_select, g_azimuth_angle, -1 * np.ones(np.shape(vel_select))) # negative one is necessary to maintain proper direction
                 
                 # get coordinates
                 velocity_latlon_select = np.hstack((lat_select, lon_select))
@@ -215,12 +217,12 @@ def read_superDARN(directory, datatype, start_time = "none", end_time = "none", 
                 weighted_mean_velocity = container["vector.vel.median"][bool_select].values # m/s
                 vel_direction_plusminus = container["vector.vel.dirn"][bool_select].values # direction of velocity. +1 away from radar, -1 towards
                 
-                # compute velocity in N-E-D frame
-                vel_select = geographic_azimuth_to_radarframe(weighted_mean_velocity, g_azimuth_angle, vel_direction_plusminus)
-                
                 # get coordinates
                 velocity_latlon_select = np.hstack((lat_select, lon_select))
                 radar_latlon_select = (container.attrs["lat"], container.attrs["lon"])
+                
+                # compute velocity in N-E-D frame
+                vel_select = geographic_azimuth_to_velframe(weighted_mean_velocity, g_azimuth_angle, vel_direction_plusminus)
                 
                 # label each radar_latlon point with an index that is the same as the iteration number of the inner for loop
                 len_vel = np.size(vel_select, 0)

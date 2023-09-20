@@ -33,7 +33,7 @@ savedir = "output_figures" + os.sep
 # define the starting time and ending time.
 # specify a select range to reduce the amount of for loop iterations, and therefore computation time
 # can, instead, only select a single date by inputting only a start time, and the superdarn file reader function will return every time in the file
-start_date = datetime(2015, 3, 1, 5, 0)
+start_date = datetime(2015, 3, 1, 4, 0)
 end_date = datetime(2015, 3, 1, 4, 10)
 
 # read the data
@@ -117,13 +117,22 @@ for i, select_time in enumerate(all_time):
     ax = plt.axes(projection=pj)
     ax.coastlines()
     ax.set_extent((prediction_lonlim + prediction_latlim), crs=ccrs.PlateCarree())
-    ax.quiver(select_velocity_latlon[::skip, 1], select_velocity_latlon[::skip, 0], select_velocity[::skip, 1], select_velocity[::skip, 0],
-              color="b", width=width, scale=scale, transform=ccrs.PlateCarree())
+
+    # necessary \/*\/
+    lat = select_velocity_latlon[::skip, 0]
+    lon = select_velocity_latlon[::skip, 1]
+    u = select_velocity[::skip, 1]
+    v = select_velocity[::skip, 0]
+    u_src_crs = u / np.cos(lat / 180 * np.pi)
+    v_src_crs = v
+    magnitude = np.sqrt(u**2 + v**2)
+    magn_src_crs = np.sqrt(u_src_crs**2 + v_src_crs**2)
+    # necessary /\./\
+
+    ax.quiver(lon, lat, u_src_crs * magnitude / magn_src_crs, v_src_crs * magnitude / magn_src_crs,
+              color="b", width=width, scale=scale, transform=ccrs.PlateCarree(), angles='xy')
+
     ax.plot(poles_latlon[:, 1], poles_latlon[:, 0], linestyle = "None", marker = ".", ms = 6, mfc = 'r', mec = 'r', transform=ccrs.PlateCarree())
-    # TESTING
-    select = 94
-    ax.plot([select_velocity_latlon[select, 1], select_radar_latlon[0, 1]], [select_velocity_latlon[select, 0], select_radar_latlon[0, 0]], linestyle = "-", linewidth = 8, marker = ".", ms = 12, mfc = 'b', mec = 'b', transform = ccrs.Geodetic())
-    ## END TESTING
     gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=False,
                   linewidth=1.5, color='gray', alpha=1, linestyle='--')
     gl.top_labels = False
@@ -132,7 +141,7 @@ for i, select_time in enumerate(all_time):
     
     
     
-    # plot input vectors and SECS output vectors
+    #plot input vectors and SECS output vectors
 
     fig_size_output = [40, 30]
     pj = ccrs.EquidistantConic(central_lon, central_lat)
@@ -141,8 +150,21 @@ for i, select_time in enumerate(all_time):
     # plot input vectors
     ax1.coastlines()
     ax1.set_extent((prediction_lonlim + prediction_latlim), crs=ccrs.PlateCarree())
-    ax1.quiver(select_velocity_latlon[::skip, 1], select_velocity_latlon[::skip, 0], select_velocity[::skip, 1], select_velocity[::skip, 0],
-              color="b", width=width, scale=scale, transform=ccrs.PlateCarree())
+    
+    # necessary \/*\/
+    lat = select_velocity_latlon[::skip, 0]
+    lon = select_velocity_latlon[::skip, 1]
+    u = select_velocity[::skip, 1]
+    v = select_velocity[::skip, 0]
+    u_src_crs = u / np.cos(lat / 180 * np.pi)
+    v_src_crs = v
+    magnitude = np.sqrt(u**2 + v**2)
+    magn_src_crs = np.sqrt(u_src_crs**2 + v_src_crs**2)
+    # necessary /\./\
+
+    ax1.quiver(lon, lat, u_src_crs * magnitude / magn_src_crs, v_src_crs * magnitude / magn_src_crs,
+              color="b", width=width, scale=scale, transform=ccrs.PlateCarree(), angles='xy')
+    
     gl_1 = ax1.gridlines(crs=ccrs.PlateCarree(), draw_labels=False,
                   linewidth=1.5, color='gray', alpha=1, linestyle='--')
     gl_1.top_labels = False
@@ -152,10 +174,35 @@ for i, select_time in enumerate(all_time):
     # plot SECS output vectors
     ax2.coastlines()
     ax2.set_extent((prediction_lonlim + prediction_latlim), crs=ccrs.PlateCarree())
-    ax2.quiver(prediction_latlon_close[::skip, 1], prediction_latlon_close[::skip, 0], prediction_velocity_close[::skip, 1], prediction_velocity_close[::skip, 0], 
-              color="b", width=width, scale=scale, transform=ccrs.PlateCarree())
-    ax2.quiver(prediction_latlon_far[::skip, 1], prediction_latlon_far[::skip, 0], prediction_velocity_far[::skip, 1], prediction_velocity_far[::skip, 0], 
-              color="k", width=width/2, scale=scale, transform=ccrs.PlateCarree())
+    
+    # necessary \/*\/
+    lat = prediction_latlon_close[::skip, 0]
+    lon = prediction_latlon_close[::skip, 1]
+    u = prediction_velocity_close[::skip, 1]
+    v = prediction_velocity_close[::skip, 0]
+    u_src_crs = u / np.cos(lat / 180 * np.pi)
+    v_src_crs = v
+    magnitude = np.sqrt(u**2 + v**2)
+    magn_src_crs = np.sqrt(u_src_crs**2 + v_src_crs**2)
+    # necessary /\./\
+
+    ax2.quiver(lon, lat, u_src_crs * magnitude / magn_src_crs, v_src_crs * magnitude / magn_src_crs,
+              color="b", width=width, scale=scale, transform=ccrs.PlateCarree(), angles='xy')
+    
+    # necessary \/*\/
+    lat = prediction_latlon_far[::skip, 0]
+    lon = prediction_latlon_far[::skip, 1]
+    u = prediction_velocity_far[::skip, 1]
+    v = prediction_velocity_far[::skip, 0]
+    u_src_crs = u / np.cos(lat / 180 * np.pi)
+    v_src_crs = v
+    magnitude = np.sqrt(u**2 + v**2)
+    magn_src_crs = np.sqrt(u_src_crs**2 + v_src_crs**2)
+    # necessary /\./\
+
+    ax2.quiver(lon, lat, u_src_crs * magnitude / magn_src_crs, v_src_crs * magnitude / magn_src_crs,
+              color="k", width=width/2, scale=scale, transform=ccrs.PlateCarree(), angles='xy')
+
     gl_2 = ax2.gridlines(crs=ccrs.PlateCarree(), draw_labels=False,
                   linewidth=1.5, color='gray', alpha=1, linestyle='--')
     gl_2.top_labels = False
