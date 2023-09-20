@@ -403,7 +403,7 @@ def place_prediction(latlim, lonlim, lat_step, lon_step):
 
 
 
-def predict_with_SECS(radar_velocity_radarframe, velocity_latlon, radar_latlon, radar_index, pred_latlon, poles_latlon, epsilon=0.05):
+def predict_with_SECS(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon, epsilon=0.05):
     '''
     this function serves as the starter function to run the SECS algorithm to predict the plasma flow at various points in the ionosphere
     
@@ -413,12 +413,6 @@ def predict_with_SECS(radar_velocity_radarframe, velocity_latlon, radar_latlon, 
             
         velocity_latlon - the lat/lon positions of the corresponding measured velocities
             dims: [number of velocity measurements x 3 (x, y, z)]
-        
-        radar_latlon - the radars that contributed to velocity measurements in the list. this can be less than the number of radar input datafiles.
-            dims: [number of contributing radars x 2 (lat, lon in degrees)]
-            
-        radar_index - a number which is the index of radar_latlon, of which informs what radar measured what velocity.
-            dims: [number of velocity measurements x 1]
             
         pred_latlon - prediction lat/lon positions
             dims: [number of prediction positions x 2 (lat, lon in degrees)]
@@ -445,7 +439,7 @@ def predict_with_SECS(radar_velocity_radarframe, velocity_latlon, radar_latlon, 
     poles_latlon = poles_latlon[np.logical_not(bool_overlap), :]
 
     # run SECS!
-    pred_vel_frame_pr = run_secs(radar_velocity_radarframe, velocity_latlon, radar_latlon, radar_index, pred_latlon, poles_latlon, epsilon)
+    pred_vel_frame_pr = run_secs(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon, epsilon)
     
     # reduce last dimension of length 1
     pred_vel_frame_pr = pred_vel_frame_pr.squeeze()

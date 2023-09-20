@@ -98,7 +98,7 @@ def compute_ehat_phi_frame_N(r1_N, r_p_N, dot_product):
     ehat_phi_frame_N = cross_result / divide_by
     return ehat_phi_frame_N
 
-def run_secs(radar_velocity_radarframe, velocity_latlon, radar_latlon, radar_index, pred_latlon, poles_latlon, epsilon):
+def run_secs(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon, epsilon):
     '''
     this is the main function to call from any script to run the spherical elementary current system method.
     the SECS method places many divergence free poles (in this implementation), and it attempts to find a least-effort solution to the overdetermined or underdetermined
@@ -115,18 +115,11 @@ def run_secs(radar_velocity_radarframe, velocity_latlon, radar_latlon, radar_ind
     the model was told to fit. there is no ability for this model, as it is coded here, to filter out "bad" input observations, nor does it weigh any inputs.
     
     INPUTS:
-        radar_velocity_radarframe: These are the velocities that the radars see, in the frame of the radar (North - East - Down).
+        radar_velocity_frame_i: These are the velocities that the radars see, in the frame of the velocity_latlon (North - East - Down).
             Size: (num of radar velocities) x (components: 3)
             
         velocity_latlonR: Coordinates of the velocity points that the radars are sampling
             Size: (num of radar velocities) x (coord, 2: lat, lon)
-        
-        radar_latlonR: radar locations
-            Size: (num of radars) x (coord, 2: lat, lon)
-        
-        radar_index: the indicies that correspond to radar_velocity_radarframe to tell which radar. Since radar_velocity_radarframe is relative
-        to the radar frame, the specific radar must be known to know the coordinate frame
-            Size: (num of radar velocities) x (1)
             
         pred_latlonR: prediction locations
             Size: (num of prediction locations) x (coord, 2: lat, lon)
@@ -141,7 +134,6 @@ def run_secs(radar_velocity_radarframe, velocity_latlon, radar_latlon, radar_ind
 
     # convert all coordinates to radians
     velocity_latlon = velocity_latlon * np.pi/180
-    radar_latlon = radar_latlon * np.pi/180
     pred_latlon = pred_latlon * np.pi/180
     poles_latlon = poles_latlon * np.pi/180
     
@@ -156,9 +148,8 @@ def run_secs(radar_velocity_radarframe, velocity_latlon, radar_latlon, radar_ind
     
     # size_i is the number of velocity points
     # size_j is the number of SECS poles
-    size_i = np.size(radar_velocity_radarframe, 0)
+    size_i = np.size(radar_velocity_frame_i, 0)
     size_j = np.size(poles_latlon, 0)
-    size_k = np.size(radar_latlon, 0)
     
     # initialize the transfer matrix, T
     T = np.zeros((size_i, size_j))
@@ -172,35 +163,23 @@ def run_secs(radar_velocity_radarframe, velocity_latlon, radar_latlon, radar_ind
     # location specified by r1_N, also in inertial coordinates
     ehat_phi_frame_N = compute_ehat_phi_frame_N(r_i_frame_N, r_p_frame_N, dot_product)
 
-    # determine what velocity points line up with which radars. use radar_index to do this.
-    index_change = np.where(np.not_equal(np.diff(radar_index, axis=0), 0))[0]+1 # add one?? YES! CONFIRMED
-    index_change = np.insert(index_change, 0, 0)
-    index_change = np.append(index_change, size_i)
-    
-    # compute [NR], which is the DCM that transforms from the radar frame to inertial frame
-    # [iNertial <-- Radar]
-    NR = np.zeros([size_i, 3, 3])
-    counter = 0
-    for k in range(size_k):
-        # if the radar is not contained in radar_index
-        if not(np.any(k == radar_index)):
-            continue
-        
-        # set the DCM for radar to inertial
-        NR[index_change[counter]:index_change[counter+1], :, :] = R_from_inertial_to_coord(radar_latlon[k, 0], radar_latlon[k, 1]).transpose()
-        counter = counter + 1
+    # compute [NV], which is the DCM that transforms from the velocity_latlon frame to the inertial frame
+    # [iNertial <-- Velocity]
+    NV = np.zeros([size_i, 3, 3])
+    for i in range(size_i):
+        NV[i, :, :] = R_from_inertial_to_coord(velocity_latlon[i, 0], velocity_latlon[i, 1]).transpose()
     
     # compute the unit vector of the radar-measured velocity, in inertial coordinates.
     # care must be taken to ensure the correct frame. since the radar measures velocity
     # in its own frame (at radar_latlon), the frame of velocity is actually in the radar frame
-    radar_velocity_magnitude = np.sqrt((radar_velocity_radarframe * radar_velocity_radarframe).sum(axis=1)).reshape([-1, 1])
-    ehat_vel_frame_R = radar_velocity_radarframe / radar_velocity_magnitude
+    radar_velocity_magnitude = np.sqrt((radar_velocity_frame_i * radar_velocity_frame_i).sum(axis=1)).reshape([-1, 1])
+    ehat_vel_frame_i = radar_velocity_frame_i / radar_velocity_magnitude
     
     # reshape the array to enable vectorized matrix multiplication with a stack of DCMs, [NR]
-    ehat_vel_frame_R = ehat_vel_frame_R.reshape(-1, 3, 1)
+    ehat_vel_frame_i = ehat_vel_frame_i.reshape(-1, 3, 1)
     
     # rotate velocity vectors from radar to inertial frame
-    ehat_vel_frame_N = NR @ ehat_vel_frame_R
+    ehat_vel_frame_N = NV @ ehat_vel_frame_i
     
     # change shape and multiply to fill out the appropriate spaces
     ehat_vel_frame_N = np.tile(ehat_vel_frame_N.reshape([size_i, 1, 3]), [1, size_j, 1])
