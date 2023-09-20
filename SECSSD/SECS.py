@@ -111,9 +111,32 @@ def read_superDARN(directory, datatype, start_time = "none", end_time = "none", 
     while all_time[-1] < end_time:
         all_time = np.vstack((all_time, all_time[-1] + timedelta(minutes=time_step)))
         
-    # chop off the end of all_time because it is always one larger. if we want to 4:30, we want all_time to end at 4:28
+    # chop off the end of all_time because it is always one larger. if we want to 4:30, we want all_time to end at 4:28 (tolerance = 2 min)
     all_time = all_time[0:-1]
     
+    # get the list of filenames that only have the DAY we want; therefore, if there are multiple days worth of files,
+    # only the specific days referenced will be searched
+    all_files = os.listdir(directory)
+    
+    # initialize
+    bool_iswithindate = []
+    # obtain a list of the dates that each of the files correspond t0, and save the results in a boolean vector
+    for i in range(len(all_files)):
+        file_date_only = datetime.strptime(all_files[i][0:8],'%Y%m%d')
+        bool_iswithindate.append(file_date_only >= start_time.replace(hour=0, minute=0, second=0) and file_date_only <= end_time.replace(hour=0, minute=0, second=0))
+        
+    if not(np.any(bool_iswithindate)):
+        raise Exception("Date provided is not found in files :(")
+    
+    bool_iswithindate = np.array(bool_iswithindate)
+    # get indices that are TRUE (file with good date is present)
+    good_files = []
+    for i in range(len(all_files)):
+        # IF file is good
+        if bool_iswithindate[i]:
+            # ...then add it to the list
+            good_files.append(all_files[i])
+            
     
     # initialize the variables to return
     vel_return = []
@@ -123,7 +146,7 @@ def read_superDARN(directory, datatype, start_time = "none", end_time = "none", 
     
     if datatype.lower() == "2.5" or datatype.lower() == "3.0":
         # loop through each file in the directory, opening each one and appending the relevant data to the output
-        for radar_iteration, filename in enumerate(os.listdir(directory)):
+        for radar_iteration, filename in enumerate(good_files):
             print("Reading file " + filename)
             t1 = time.time()
             # open the file
@@ -190,7 +213,7 @@ def read_superDARN(directory, datatype, start_time = "none", end_time = "none", 
         
     elif datatype.lower() == "v3_grid":
         # loop through each file in the directory, opening each one and appending the relevant data to the output
-        for radar_iteration, filename in enumerate(os.listdir(directory)):
+        for radar_iteration, filename in enumerate(good_files):
             print("Reading file " + filename)
             t1 = time.time()
             # open the file
