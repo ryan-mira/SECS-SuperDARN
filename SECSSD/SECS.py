@@ -17,7 +17,17 @@ import os
 from datetime import datetime, timedelta
 import time
 
+
 from .perform_SECS import run_secs
+from .bridsonVariableRadius import poissonDiskSampling
+
+# TEMP
+#from poissonDiskSampling import bridsonVariableRadius
+#import matplotlib.pyplot as plt
+#from matplotlib.ticker import MultipleLocator
+
+from scipy.io import savemat
+# TEMP
 
 
 def geographic_azimuth_to_radarframe(vector_magnitude, azimuth, direction):
@@ -174,7 +184,7 @@ def read_superDARN(directory, datatype, start_time = "none", end_time = "none", 
                     radar_latlon_return[i] = np.vstack((radar_latlon_return[i], radar_latlon_select))
                     radar_latlon_index_return[i] = np.vstack((radar_latlon_index_return[i], radar_latlon_index_select))
                 t2 = time.time()
-            print("File " + filename + " read in " + "{:.2f}".format(t2-t1) + " seconds.")
+            print("\tFile " + filename + " read in " + "{:.2f}".format(t2-t1) + " seconds.")
         
     elif datatype.lower() == "v3_grid":
         # loop through each file in the directory, opening each one and appending the relevant data to the output
@@ -220,7 +230,7 @@ def read_superDARN(directory, datatype, start_time = "none", end_time = "none", 
                 if i >= len(vel_return):
                     vel_return.append(vel_select)
                     velocity_latlon_return.append(velocity_latlon_select)
-                    radar_latlon_return.append(radar_latlon_select)
+                    radar_latlon_return.append(np.array(radar_latlon_select)[np.newaxis, :])
                     radar_latlon_index_return.append(radar_latlon_index_select)
                 else:
                     vel_return[i] = np.vstack((vel_return[i], vel_select))
@@ -228,7 +238,7 @@ def read_superDARN(directory, datatype, start_time = "none", end_time = "none", 
                     radar_latlon_return[i] = np.vstack((radar_latlon_return[i], radar_latlon_select))
                     radar_latlon_index_return[i] = np.vstack((radar_latlon_index_return[i], radar_latlon_index_select))
                 t2 = time.time()
-            print("File " + filename + " read in " + "{:.2f}".format(t2-t1) + " seconds.")
+            print("\tFile " + filename + " read in " + "{:.2f}".format(t2-t1) + " seconds.")
     
     else:
         print("Unknown SuperDARN data format")
@@ -240,7 +250,7 @@ def read_superDARN(directory, datatype, start_time = "none", end_time = "none", 
 
 
 
-def place_poles(latlim, lonlim, lat_step, lon_step, velocity_latlon = "none"):
+def place_poles(latlim, lonlim, lat_step, lon_step, velocity_latlon = "none", density_curvature=1, max_density=0.5, close_tolerance=2):
     '''
     this function places poles given the input latitude and longitude limits
     it is encouraged to place the poles larger than the limits of the velocity_latlon locations
@@ -252,8 +262,16 @@ def place_poles(latlim, lonlim, lat_step, lon_step, velocity_latlon = "none"):
         lonlim - longitude limits [lower, upper]
         lat_step - the spacing in degrees of the meshgrid in the latitude direction
         lon_step - the spacing in degrees of the meshgrid in the longitude direction
-        velocity_latlon - not implemented. would be used to inform the placement of poles in a variable density placement scheme. dims [number of velocity x 2 (lat, lon)]
-        (not currently inputted) - (pred_latlon) - (prediction locations, used to prevent pole placement directly on top of prediction locations)
+        velocity_latlon - used to inform the placement of poles in a variable density placement scheme. dims [number of velocity x 2 (lat, lon)]
+            default: "none", which means the poles are just a meshgrid of points put into a 2D list
+            IF velocity_latlon is a list of locations, the poles will be variably spaced, clustering around these lat/lon points.
+                the density far from the points is determined by the AVERAGE of lat_step and lon_step
+        density_strength - how much extra density the proximity to input measuremeents causes
+            IF velocity_latlon is "none", this does nothing
+        max_density - the lowest radius (most dense) the poles can be spaced
+            IF velocity_latlon is "none", this does nothing
+        close_tolerance - the radius of effect that an input measurement has
+            IF velocity_latlon is "none", this does nothing
     
     OUTPUTS:
         poles_latlon - a 2D array containing all the lat/lon points. this list is 2D because the lat and lon meshgrids are reshaped to a 1D column vector and placed pair-wise
@@ -261,24 +279,66 @@ def place_poles(latlim, lonlim, lat_step, lon_step, velocity_latlon = "none"):
     '''
     
     # extract variables
-    lat_min = latlim[0]
-    lat_max = latlim[1]
+    lat_min = np.floor(latlim[0])
+    lat_max = np.floor(latlim[1])
     
-    lon_min = lonlim[0]
-    lon_max = lonlim[1]
+    lon_min = np.floor(lonlim[0])
+    lon_max = np.floor(lonlim[1])
 
-    # generate grid of points
-    [lat_s, lon_s] = np.meshgrid(np.arange(lat_min, lat_max+0.1, lat_step), np.arange(lon_min, lon_max+0.1, lon_step))
+    # if this is TRUE, then run a simple meshgrid of points
+    if isinstance(velocity_latlon, str):
+        # generate grid of points according to the spacing inputted above
+        [lat_s, lon_s] = np.meshgrid(np.arange(lat_min, lat_max+0.1, lat_step), np.arange(lon_min, lon_max+0.1, lon_step))
+        
+        # this offset is here to prevent poles from being located on top of prediction locations
+        # it isn't the greatest nor the most robust, but it works decently enough
+        offset = 0.3
+        lat_s = lat_s - offset
+        lon_s = lon_s - offset
+        # reshape the above meshgrid into a 2D list of poles (lat, lon)
+        poles_latlon = np.hstack((lat_s.reshape([-1, 1]),
+                                      lon_s.reshape([-1, 1])))
+        # exit function
+        return (np.size(poles_latlon, 0), poles_latlon)
+    
+    # otherwise, continue executing the code
+    # velocity_latlon is given as a list, and place the SECS poles in a variable-spacing, variable-density manner
 
-    # this offset is here to prevent poles from being located on top of prediction locations
-    offset = 0.3
-    lat_s = lat_s - offset
-    lon_s = lon_s - offset
+    # generate grid of points. this is a meshgrid of 1x1 degree spacing in (lat x lon)
+    [lat_s, lon_s] = np.meshgrid(np.arange(lat_min, lat_max+0.1, 1), np.arange(lon_min, lon_max+0.1, 1))
 
-    # generate the list of poles (lat, lon)
-    poles_latlon = np.hstack((lat_s.reshape([-1, 1]),
+    # reshape the above meshgrid into a 2D list of poles (lat, lon)
+    poles_latlon_initial = np.hstack((lat_s.reshape([-1, 1]),
                                   lon_s.reshape([-1, 1])))
-    return poles_latlon
+
+    # for each entry in the list, compute the number of pole stations within a certain angular tolerance
+    # this informs the (discrete) density function of the input measurements,
+    # which is used to determine the (discrete) output of variably-spaced, variably-dense SECS poles
+    num_close = compute_num_closeto(poles_latlon_initial, velocity_latlon, angular_tolerance=close_tolerance)[:, np.newaxis]
+
+    # input discrete density function
+    # units are radius in degrees of each point
+    # each entry specifies the approximate number of degrees the resulting poles would like to be from each other at the specific corresponding lat/lon
+    # this varies for each lat/lon, and the poles will distribute themselves accordingly
+    global_step = (lat_step + lon_step) / 2 # the global density step
+    density_input = np.zeros((np.size(poles_latlon_initial, 0), 1)) # initialize
+    
+
+    # set the density input using a mask and a mathematical function
+    # using a slightly modified logistic function to generate nicely spaced density gradients
+    density_input[num_close == 0] = global_step # radius spacing of poles far from input measurements
+    density_input[num_close != 0] = 1.5*(global_step - max_density) / (1 + np.e**(0.4*density_curvature * (num_close[num_close != 0] - 1))) + max_density # radius spacing for poles near input measurements
+
+
+    # run the poisson disk sampling algorithm on a shell surface to place the SECS poles
+    num_iterations = 40 # this is the number of attempts to place a point at a new location. don't change this; it does not make things more "accurate". 
+
+    # perform the poisson disk sampling algorithm.
+    # THANK YOU ADRIAN BITTNER
+    (num_poles, poles_latlon) = poissonDiskSampling(poles_latlon_initial, lat_min, lat_max, lon_min, lon_max, density_input, num_iterations)
+
+    
+    return (num_poles, poles_latlon)
     
 
 
@@ -345,22 +405,20 @@ def predict_with_SECS(radar_velocity_radarframe, velocity_latlon, radar_latlon, 
             dims: a single number. this number should not need to be changed much, if at all.
             
         OUTPUTS:
-            pred_vel_frame_fr - spherical elementary current system predicted velocity at the prediction locations. this velocity is in the coordinate frame of the prediction location (N-E-D)
+            pred_vel_frame_fr - spherical elementary current system predicted velocity at the prediction locations.
+                this velocity is in the coordinate frame of the prediction location (N-E-D)
             dims: [number of output velocity x 3 (x, y, z)]
     '''
     
     # check that the poles do not coincide with a velocity measurement or a prediciton location
-    bool_1 = abs(poles_latlon[:, [0]] - velocity_latlon[:, [0]].transpose()) < 0.05
-    bool_2 = abs(poles_latlon[:, [1]] - velocity_latlon[:, [1]].transpose()) < 0.05
-    
-    bool_3 = abs(poles_latlon[:, [0]] - pred_latlon[:, [0]].transpose()) < 0.05
-    bool_4 = abs(poles_latlon[:, [1]] - pred_latlon[:, [1]].transpose()) < 0.05
-    
-    bool_overlap = np.logical_or(np.any(np.logical_and(bool_1, bool_2), 1), np.any(np.logical_and(bool_3, bool_4), 1))
-    
-    # cut the poles that overlap with either a velocity location or prediction location
+    overlap_tolerance = 0.05 # degrees
+    bool_overlap1 = compute_num_closeto(poles_latlon, velocity_latlon, angular_tolerance=overlap_tolerance).astype(bool) # check velocity locations
+    bool_overlap2 =  compute_num_closeto(poles_latlon, pred_latlon, angular_tolerance=overlap_tolerance).astype(bool) # check prediction locations
+    bool_overlap = np.logical_or(bool_overlap1, bool_overlap2)
+
+    # delete the poles that are too close to either the velociy OR prediction locations
     poles_latlon = poles_latlon[np.logical_not(bool_overlap), :]
-    
+
     # run SECS!
     pred_vel_frame_pr = run_secs(radar_velocity_radarframe, velocity_latlon, radar_latlon, radar_index, pred_latlon, poles_latlon, epsilon)
     
@@ -372,10 +430,12 @@ def predict_with_SECS(radar_velocity_radarframe, velocity_latlon, radar_latlon, 
 
 
 
-def compute_bool_closeto(interest_latlon, closeto_latlon, angular_tolerance=1):
+def compute_num_closeto(interest_latlon, closeto_latlon, angular_tolerance=1):
     '''
     this function computes if the positions in pred_latlon are within a tolerance (in degrees) to a list of points given in closeto_latlon.
-    returns a boolean matrix that identified TRUE (is close) or FALSE (is not close) corresponding to the entries in pred_latlon
+    returns a matrix that identifies TRUE (is close) or FALSE (is not close) corresponding to the entries in pred_latlon
+    TRUE - entry is positive integer. the specific number identifies the number of CLOSE_TO that is within angular_tolerance
+    FALSE - entry is zero
     
     INPUTS:
         interest_latlon - the 2D list of lat/lon positions that we are interested in checking if they are close to ""something""
@@ -388,7 +448,9 @@ def compute_bool_closeto(interest_latlon, closeto_latlon, angular_tolerance=1):
             dims: a single number
             
     OUTPUTS:
-        bool_isclose - a boolean list of TRUE/FALSE. TRUE - interest_latlon is within tolerance to at least one closeto_latlon point. FALSE - the selected interest_latlon point is not within tolerance to ANY closeto_latlon
+        num_isclose - a list of integers, the bool of which identifies TRUE/FALSE.
+            TRUE - interest_latlon is within tolerance to at least one closeto_latlon point.
+            FALSE - the selected interest_latlon point is not within tolerance to ANY closeto_latlon
             dims: [number of interest lat/lon locations x nothing]
     '''
     # find SECS pred outputs that are within a tolerance to a velocity measurement
@@ -400,9 +462,8 @@ def compute_bool_closeto(interest_latlon, closeto_latlon, angular_tolerance=1):
     delta2 = closeto_rotate[[1], :] * np.pi/180
 
     angular_separation = np.sin(phi1) * np.sin(phi2) + np.cos(phi1) * np.cos(phi2) * np.cos(delta1 - delta2)
-
-    bool_isclose = np.any(angular_separation > np.cos(angular_tolerance * np.pi/180), 1)
-    return bool_isclose
+    num_isclose = np.sum(angular_separation > np.cos(angular_tolerance * np.pi/180), 1)
+    return num_isclose
 
 
 
@@ -439,21 +500,21 @@ def compute_close_and_far(velocity_vectors, vel_latlon, closeto_latlon, angular_
             dims: [number of far velocity vectors x 3 (x, y, z)]
     '''
     # compute the boolean if a prediction velocity_vector location is close to a input velocity 
-    bool_isclose = compute_bool_closeto(vel_latlon, closeto_latlon, angular_tolerance)
-
+    bool_isclose = compute_num_closeto(vel_latlon, closeto_latlon, angular_tolerance).astype(bool)
     # initialize
     velocity_vector_close = np.zeros((np.count_nonzero(bool_isclose), 3))
     velocity_vector_far = np.zeros(((np.count_nonzero(np.logical_not(bool_isclose)), 3)))
     vel_latlon_close = np.zeros((np.count_nonzero(bool_isclose), 2))
     vel_latlon_far = np.zeros(((np.count_nonzero(np.logical_not(bool_isclose)), 2)))
 
-    # set close and far output vectors
+    # set close output vectors
     velocity_vector_close[:, 0] = velocity_vectors[bool_isclose, 0]
     velocity_vector_close[:, 1] = velocity_vectors[bool_isclose, 1]
     velocity_vector_close[:, 2] = velocity_vectors[bool_isclose, 2]
     vel_latlon_close[:, 0] = vel_latlon[bool_isclose, 0]
     vel_latlon_close[:, 1] = vel_latlon[bool_isclose, 1]
 
+    # set the far output vectors
     velocity_vector_far[:, 0] = velocity_vectors[np.logical_not(bool_isclose), 0]
     velocity_vector_far[:, 1] = velocity_vectors[np.logical_not(bool_isclose), 1]
     velocity_vector_far[:, 2] = velocity_vectors[np.logical_not(bool_isclose), 2]
@@ -461,3 +522,41 @@ def compute_close_and_far(velocity_vectors, vel_latlon, closeto_latlon, angular_
     vel_latlon_far[:, 1] = vel_latlon[np.logical_not(bool_isclose), 1]
     
     return (velocity_vector_close, velocity_vector_far, vel_latlon_close, vel_latlon_far)
+
+
+def return_interior_input_velocities(velocity, velocity_latlon, latlim, lonlim):
+    '''
+    this function returns only the velocities that are located within the latitude and longitude limits
+    note this function will not work properly if the north or south pole is involved, although if these poles are within the domain of interest,
+    there is likely not a reason to cut the velocities
+    
+    INPUTS:
+        velocity- the list of velocity vectors that we which to compute if they are close or far from a list of selected points
+            dims: [number of velocity vectors x 3 (x, y, z)]
+           
+        vel_latlon - the list of lat/lon positions that correspond to the input velocity_vectors
+            dims: [number of velocity vectors x 2 (lat, lon in degrees)]
+               
+        latlim - latitude limits, lower and upper
+            dims: [(lower, upper) x 1]
+            
+        lonlim - longitude limits, lower and upper
+            dims: [(lower, upper) x 1]
+            
+    OUTPUTS:
+        velocity_cut - the list of velocity vectors that are located within the lat/lon boundaries
+            dims: [number of velocity vectors x 3 (x, y, z)]
+            
+        velocity_latlon_cut - the corresponding list of lat/lon coordinates that define the locations of the velocity_cut vectors
+            dims: [number of velocity vectors x 2 (lat, lon in degrees)]
+    '''
+    
+    # boolean vector, TRUE means within the domain, FALSE is outside it
+    bool_keep = (velocity_latlon[:, 0] >= latlim[0]) & (velocity_latlon[:, 0] <= latlim[1]) & (velocity_latlon[:, 1] >= lonlim[0]) \
+                    & (velocity_latlon[:, 1] <= lonlim[1])
+    
+    # extract the velocity vectors and velocity vector locations that we desire
+    velocity_cut = velocity[bool_keep, :]
+    velocity_latlon_cut = velocity_latlon[bool_keep, :]
+    
+    return (velocity_cut, velocity_latlon_cut)
