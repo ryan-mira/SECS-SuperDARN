@@ -428,6 +428,10 @@ def predict_with_SECS(radar_velocity_frame_i, velocity_latlon, pred_latlon, pole
                 this velocity is in the coordinate frame of the prediction location (N-E-D)
             dims: [number of output velocity x 3 (x, y, z)]
     '''
+    # check that there are inputs
+    if np.size(radar_velocity_frame_i) == 0:
+        print("No radar velocity data, skipping SECS algorithm...")
+        return 0
     
     # check that the poles do not coincide with a velocity measurement or a prediciton location
     overlap_tolerance = 0.05 # degrees

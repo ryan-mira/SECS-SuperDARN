@@ -11,23 +11,43 @@ def R_from_inertial_to_coord(lat, lon):
     '''
     This function computes the DCM rotation matrix from the inertial frame to a body frame, located at a specific
     lat/lon point. The body frame is assumed to be (north - east - down).
-    lat/lon are in radians
+    (lat) x (lon) are in radians. dims (something x nothing)
 
     this function is internal to perform_SECS.py
+    this function is VECTORIZED! performs all the DCMS, all at once
     '''
     # define the R2 rotation matrix (about 2 axis)
-    R2 = lambda angle : np.array([ (np.cos(angle), 0, -np.sin(angle)),
-                                 (0, 1, 0),
-                                 (np.sin(angle), 0, np.cos(angle))
-        ])
+    R2 = lambda angle, z, unus : np.concatenate((
+        np.concatenate((np.cos(angle), z, -np.sin(angle)), axis=2),
+        np.concatenate((z, unus, z), axis=2),
+        np.concatenate((np.sin(angle), z, np.cos(angle)), axis=2)        ), axis=1
+        )
+    
     # define the R3 rotation matrix (about 3 axis)
-    R3 = lambda angle : np.array([ (np.cos(angle), np.sin(angle), 0),
-                                  (-np.sin(angle), np.cos(angle), 0),
-                                  (0, 0, 1)
+    R3 = lambda angle, z, unus : np.concatenate((
+        np.concatenate((np.cos(angle), np.sin(angle), z), axis=2),
+        np.concatenate((-np.sin(angle), np.cos(angle), z), axis=2),
+        np.concatenate((z, z, unus), axis=2)        ), axis=1
+        )
+    
+    # zero
+    z = np.zeros((len(lat), 1, 1))
+    # one
+    unus = np.ones((len(lat), 1, 1))
+    
+    # reshape to get proper
+    lat = lat.reshape(-1, 1, 1)
+    lon = lon.reshape(-1, 1, 1)
+    
+    # precompute a rotation about the 2 axis, -90 degrees
+    rotation_precompute = np.array([ (0, 0, 1),
+                              (0, 1, 0),
+                              (-1, 0, 0)
         ])
+    rotation_precompute = np.tile(rotation_precompute, (len(lat), 1, 1))
     
     # compute the DCM from inertial to body, [Body <-- iNertial]
-    BN = R2(-90 * np.pi/180) @ R2(-lat) @ R3(lon)
+    BN = rotation_precompute @ R2(-lat, z, unus) @ R3(lon, z, unus)
     return BN
 
 
@@ -77,7 +97,6 @@ def compute_ehat_phi_frame_N(r1_N, r_p_N, dot_product):
     
     this function is internal to perform_SECS.py
     '''
-    
     size_pos = np.size(r1_N, 0)
     size_p = np.size(r_p_N, 0)
 
@@ -97,6 +116,7 @@ def compute_ehat_phi_frame_N(r1_N, r_p_N, dot_product):
     # compute the ehat vector of SECS pole
     ehat_phi_frame_N = cross_result / divide_by
     return ehat_phi_frame_N
+
 
 def run_secs(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon, epsilon):
     '''
@@ -131,7 +151,6 @@ def run_secs(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon,
         pred_data_frame_pr - the list of velocity vectors at the prediction locations that are computed from the SECS method
             dims: [number of prediction velocity x 3 (x, y, z)]
     '''
-
     # convert all coordinates to radians
     velocity_latlon = velocity_latlon * np.pi/180
     pred_latlon = pred_latlon * np.pi/180
@@ -165,9 +184,8 @@ def run_secs(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon,
 
     # compute [NV], which is the DCM that transforms from the velocity_latlon frame to the inertial frame
     # [iNertial <-- Velocity]
-    NV = np.zeros([size_i, 3, 3])
-    for i in range(size_i):
-        NV[i, :, :] = R_from_inertial_to_coord(velocity_latlon[i, 0], velocity_latlon[i, 1]).transpose()
+    NV = R_from_inertial_to_coord(velocity_latlon[:, 0], velocity_latlon[:, 1])
+    NV = np.transpose(NV, axes=(0, 2, 1)) # transpose to get the proper rotation
     
     # compute the unit vector of the radar-measured velocity, in inertial coordinates.
     # care must be taken to ensure the correct frame. since the radar measures velocity
@@ -197,6 +215,16 @@ def run_secs(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon,
     Z = radar_velocity_magnitude
     
     # compute the singular value decomposition of the transfer matrix, T. This breaks the matrix up into a list of eigenvalues (S) and other stuff (U, V')
+    
+    ## TESTING
+    # if the transfer matrix has NaN or infinity values in it, then something is seriously wrong and ``abandon all hope for ye who enter here''
+    if np.any(np.isnan(T)):
+        print("Transfer Matrix contains an infinity, returning nothing (w/o stopping execution)")
+        return 0
+    if np.any(np.isinf(T)):
+        print("Transfer Matrix contains an NaN, returning nothing (w/o stopping execution)")
+        return 0
+    ## END TESTING
     (U, S_vec, V_t) = np.linalg.svd(T,full_matrices=False)
 
     # define the cutoff point to separate the poorly conditioned from the well conditioned part of the transfer matrix
@@ -218,15 +246,9 @@ def run_secs(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon,
     PREDICTION PART
     This is the part that computes the predicted velocity at any desired location
     '''
-
-    # number of prediction points
-    size_p = np.size(pred_latlon, 0)
-    
-    # use a for loop to compute the DCMs. this is slow and should be optimized
+    # use a for loop to compute the DCMs from inertial frame to each and every prediction frame
     # DCM from inertial frame to prediction frame [PRedict <-- iNetial]
-    PRN = np.zeros([size_p, 3, 3])
-    for p in range(size_p):
-        PRN[p, :, :] = R_from_inertial_to_coord(pred_latlon[p, 0], pred_latlon[p, 1])
+    PRN = R_from_inertial_to_coord(pred_latlon[:, 0], pred_latlon[:, 1])
     
     # compute theta star, same angle as above but with different points (pred crossed with poles)
     (theta_star, dot_product) = compute_theta_star(r_pr_frame_N, r_p_frame_N)
