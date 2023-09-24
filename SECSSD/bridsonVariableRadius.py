@@ -93,10 +93,6 @@ def poissonDiskSampling(latlon, lat_min, lat_max, lon_min, lon_max, radius, k=30
     :param radius: 2d array specifying the minimum sampling radius for each spatial position in the sampling box. The
                    size of the sampling box is given by the size of the radius array.
     :param k: Number of iterations to find a new particle in an annulus between radius r and 2r from a sample particle.
-    :param radiusType: Method to determine the distance to newly spawned particles. 'default' follows the algorithm of
-                       Bridson (2007) and generates particles uniformly in the annulus between radius r and 2r.
-                       'normDist' instead creates new particles at distances drawn from a normal distribution centered
-                       around 1.5r with a dispersion of 0.2r.
     """
     
     '''
@@ -113,7 +109,7 @@ def poissonDiskSampling(latlon, lat_min, lat_max, lon_min, lon_max, radius, k=30
     '''
     
     # Pick initial (active) point
-    np.random.seed(2) # TEMPORARY!!!! put here for debugging purposes
+    #np.random.seed(2) # TEMPORARY!!!! put here for debugging purposes
     # linearly interpolate between the latitude and longitude limits, respectively
     coords = np.zeros((2, 1))
     coords[0] = np.random.random() * (lat_max - lat_min) + lat_min # latitude
@@ -172,7 +168,7 @@ def poissonDiskSampling(latlon, lat_min, lat_max, lon_min, lon_max, radius, k=30
 
         else:
             # There is a conflict. Do NOT create a new particle at this position!
-            queue = np.delete(queue, idx ,0)
+            queue = np.delete(queue, idx, 0)
             continue
 
     return(nParticle, particleCoordinates)

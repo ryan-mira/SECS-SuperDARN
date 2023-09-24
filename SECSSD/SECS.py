@@ -21,14 +21,6 @@ import time
 from .perform_SECS import run_secs
 from .bridsonVariableRadius import poissonDiskSampling
 
-# TEMP
-#from poissonDiskSampling import bridsonVariableRadius
-#import matplotlib.pyplot as plt
-#from matplotlib.ticker import MultipleLocator
-
-from scipy.io import savemat
-# TEMP
-
 
 def geographic_azimuth_to_velframe(vector_magnitude, azimuth, direction):
     
@@ -52,9 +44,9 @@ def geographic_azimuth_to_velframe(vector_magnitude, azimuth, direction):
                   np.zeros([np.size(azimuth), 1]) ])
     
     # multiply by the magnitude and then the sign of the direction
-    radar_velocity_radarframe = vector_magnitude[:, np.newaxis] * direction[:, np.newaxis] * R
+    radar_velocity_velframe = vector_magnitude[:, np.newaxis] * direction[:, np.newaxis] * R
     
-    return radar_velocity_radarframe
+    return radar_velocity_velframe
 
 
 
@@ -408,7 +400,7 @@ def predict_with_SECS(radar_velocity_frame_i, velocity_latlon, pred_latlon, pole
     this function serves as the starter function to run the SECS algorithm to predict the plasma flow at various points in the ionosphere
     
     INPUTS:
-        radar_veloicty_radarframe - the measured velocity in radar NED frame which serve as inputs.
+        radar_velocity_frame_i - the measured velocity in velocity lat/lon NED frame which serve as inputs.
             dims: [number of velocity measurements x 3 (x, y, z)]
             
         velocity_latlon - the lat/lon positions of the corresponding measured velocities
@@ -444,6 +436,10 @@ def predict_with_SECS(radar_velocity_frame_i, velocity_latlon, pred_latlon, pole
 
     # run SECS!
     pred_vel_frame_pr = run_secs(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon, epsilon)
+    
+    # if there was an error in the solving of the SVD, return a zero
+    if np.all(pred_vel_frame_pr == 0):
+        return 0
     
     # reduce last dimension of length 1
     pred_vel_frame_pr = pred_vel_frame_pr.squeeze()

@@ -150,6 +150,9 @@ def run_secs(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon,
     OUTPUTS:
         pred_data_frame_pr - the list of velocity vectors at the prediction locations that are computed from the SECS method
             dims: [number of prediction velocity x 3 (x, y, z)]
+            
+    this code is not supposed to be readable
+    it is supposed to be fast (at least, as fast as python will allow)
     '''
     # convert all coordinates to radians
     velocity_latlon = velocity_latlon * np.pi/180
@@ -214,9 +217,6 @@ def run_secs(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon,
     # could simplify by not creating a duplicate variable
     Z = radar_velocity_magnitude
     
-    # compute the singular value decomposition of the transfer matrix, T. This breaks the matrix up into a list of eigenvalues (S) and other stuff (U, V')
-    
-    ## TESTING
     # if the transfer matrix has NaN or infinity values in it, then something is seriously wrong and ``abandon all hope for ye who enter here''
     if np.any(np.isnan(T)):
         print("Transfer Matrix contains an infinity, returning nothing (w/o stopping execution)")
@@ -224,7 +224,8 @@ def run_secs(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon,
     if np.any(np.isinf(T)):
         print("Transfer Matrix contains an NaN, returning nothing (w/o stopping execution)")
         return 0
-    ## END TESTING
+    
+    # compute the singular value decomposition of the transfer matrix, T. This breaks the matrix up into a list of eigenvalues (S) and other stuff (U, V')
     (U, S_vec, V_t) = np.linalg.svd(T,full_matrices=False)
 
     # define the cutoff point to separate the poorly conditioned from the well conditioned part of the transfer matrix
@@ -236,6 +237,7 @@ def run_secs(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon,
     S_vec[S_vec < S_cutoff] = 0
     S_vec[S_vec!=0] = 1 / S_vec[S_vec!=0]
     
+    # make S into a diagonal matrix with the last several entries zero (as a result of the operation above)
     S = np.diag(S_vec)
     
     # compute the scaling factors using fancy matrix math
