@@ -39,8 +39,8 @@ def geographic_azimuth_to_velframe(vector_magnitude, azimuth, direction):
     azimuth = azimuth * np.pi/180
     
     # FRAME: body frame of radar; (north - east - down)
-    R = np.hstack([ (np.cos(azimuth))[:, np.newaxis],
-                  (np.sin(azimuth))[:, np.newaxis],
+    R = np.hstack([ (-np.cos(azimuth))[:, np.newaxis],
+                  (-np.sin(azimuth))[:, np.newaxis],
                   np.zeros([np.size(azimuth), 1]) ])
     
     # multiply by the magnitude and then the sign of the direction
