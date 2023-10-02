@@ -16,11 +16,31 @@ import xarray as xr
 import os
 from datetime import datetime, timedelta
 import time
-
-
+import glob
+from dateutil import parser
 from .perform_SECS import run_secs
 from .bridsonVariableRadius import poissonDiskSampling
 
+def mjd2datetime(mjd):
+    mjd_offset = np.datetime64('1858-11-17') # an offset parameter to convert the julian date to datetime properly
+    dt = (mjd + mjd_offset).astype('datetime64[s]').astype(datetime) # datetime format of the radar beams
+    return dt
+
+def round2minute(dt, roundTo=60):
+    """Round a datetime object to any time lapse in seconds
+    dt : datetime.datetime object, default now.
+    roundTo : Closest number of seconds to round to, default 1 minute.
+    """
+    def _convert(t):
+        seconds = (t.replace(tzinfo=None) - t.min).seconds
+        rounding = (seconds+roundTo/2) // roundTo * roundTo
+        return t + timedelta(0,rounding-seconds,-t.microsecond)
+    if isinstance(dt, datetime):
+        dtt = _convert(dt)
+    else:
+        dtt = np.array([_convert(t) for t in dt])
+
+    return dtt  
 
 def geographic_azimuth_to_velframe(vector_magnitude, azimuth, direction):
     
@@ -35,24 +55,19 @@ def geographic_azimuth_to_velframe(vector_magnitude, azimuth, direction):
     the bearing of a geodetic line will be different on point A compared to point B...
     this has already been accounted for in the superDARN data files
     '''
-    # convert azimuth to radians
-    azimuth = azimuth * np.pi/180
-    
     # FRAME: body frame of radar; (north - east - down)
-    R = np.hstack([ (-np.cos(azimuth))[:, np.newaxis],
-                  (-np.sin(azimuth))[:, np.newaxis],
-                  np.zeros([np.size(azimuth), 1]) ])
+    R = np.hstack([ (np.cos(np.radians(azimuth)))[:, np.newaxis],
+                  (np.sin(np.radians(azimuth)))[:, np.newaxis],
+                  np.zeros([azimuth.shape[0], 1]) ])
     
     # multiply by the magnitude and then the sign of the direction
     radar_velocity_velframe = vector_magnitude[:, np.newaxis] * direction[:, np.newaxis] * R
     
     return radar_velocity_velframe
 
-
-
-def read_superDARN(directory, datatype, start_time = "none", end_time = "none", time_step = 2):
+def read_superDARN(directory, start_time=None, end_time = None, datatype='v3_grid', time_step = 2):
     '''
-    This function reads in the superdarn data, and returns an xarray object that contains the relevant information
+    This function reads in the superdarn data, and returns an farray object that contains the relevant information
     output is collected_output and collected_time
     
     INPUTS:
@@ -69,85 +84,78 @@ def read_superDARN(directory, datatype, start_time = "none", end_time = "none", 
     OUTPUTS:
         collected_output - list of 4 long:
             collected_output[0] - all the superDARN measured velocities. this itself is a list that organized by times. each list entry corresponds to a single time
-                collected_output[0][0] is all the velocities at the first time numpy array of floats. dims [num velocity x 3 components (x, y, z)]
+                collected_output[0][0] is all the velocities at the first time numpy array of floats. dims [num velocity f 3 components (f, y, z)]
                     all velocities are in the radar frame, North-East-Down (NED) frame
 
             collected_output[1] - all the lat/lon locations of the velocity returns. length [number_of_times]
-                collected_output[1][0] is all the lat/lon locations at the first time. numpy array of floats. dims [num velocity x 2 (lat, lon in degrees)]
+                collected_output[1][0] is all the lat/lon locations at the first time. numpy array of floats. dims [num velocity f 2 (lat, lon in degrees)]
             
             collected_output[2] - lat/lon of all the radars that measure velocity. length [number_of_times]
-                collected_output[2][0] is all the lat/lon of the radars that measured velocity in the first time. numpy array of floats. dims [num radar x 2 (lat, lon in degrees)]
+                collected_output[2][0] is all the lat/lon of the radars that measured velocity in the first time. numpy array of floats. dims [num radar f 2 (lat, lon in degrees)]
 
-            collected_output[3] - an index that contains the radar number, corresponding to collected_output[2], for a velocity measurement. it tells which radars measured which velocity measurement. length [number_of_times]
-                collected_output[3][0] are the indices that correspond to the first time. dims [num velocity x 1]
+            collected_output[3] - an indef that contains the radar number, corresponding to collected_output[2], for a velocity measurement. it tells which radars measured which velocity measurement. length [number_of_times]
+                collected_output[3][0] are the indices that correspond to the first time. dims [num velocity f 1]
 
         all_time is list that a list of length number_of_times. this contains the datetime.datetime of each selected time. length [number_of_times]
             the length of this list is equal to the length of collected_output[0], collected_output[1], collected_output[2], and collected_output[3]            
     '''
     
     # get the array of times computed
-    if isinstance(start_time, str):
-        # if there is no user input, then default to the entire day
+    if start_time is None:
+        # if there is no user input, then default to the entire day of the first file in the directory
         start_file = os.listdir(directory)[0]
         start_time = datetime.strptime(start_file[0:8], '%Y%m%d')
         end_time = start_time + timedelta(days=1)
+    if isinstance(start_time, str):
+        # If the start_time is provided as string, try the conversion to datetime
+        start_time = parser.parse(start_time)
+    if isinstance(end_time, str):
+        # If end)time is provided as str, try the conversion to datetime
+        end_time = parser.parse(end_time)
         
-    elif not(isinstance(start_time, str)) and isinstance(end_time, str):
+    if end_time is None:
         # if the user requests a start date, but provides no end date, then return only one date
-        start_file = os.listdir(directory)[0]
         end_time = start_time + timedelta(minutes=time_step)
     
+    assert isinstance(start_time, datetime) and isinstance(end_time, datetime)
+    
+    # Filter the available files by the dates
+    start_date = datetime(start_time.year, start_time.month, start_time.day)
+    end_date = datetime(start_time.year, end_time.month, end_time.day)
+    #Read all files in directory
+    files = np.array(sorted(glob.glob(directory + '*.nc')))
+    #Get the corresponding dates for each file
+    file_dates = np.array([datetime.strptime(os.path.split(f)[1][:8], "%Y%m%d") for f in files])
+    #What are good files?
+    idd = (file_dates >= start_date) & (file_dates <= end_date)
+    #Filte the file names
+    good_files = files[idd]
+    
     # create a list of all times to provide velocity outputs
-    all_time = np.empty([0, 1])
-    all_time = np.vstack((all_time, start_time))
-    while all_time[-1] < end_time:
-        all_time = np.vstack((all_time, all_time[-1] + timedelta(minutes=time_step)))
-        
-    # chop off the end of all_time because it is always one larger. if we want to 4:30, we want all_time to end at 4:28 (tolerance = 2 min)
-    all_time = all_time[0:-1]
-    
-    # get the list of filenames that only have the DAY we want; therefore, if there are multiple days worth of files,
-    # only the specific days referenced will be searched
-    all_files = os.listdir(directory)
-    
-    # initialize
-    bool_iswithindate = []
-    # obtain a list of the dates that each of the files correspond t0, and save the results in a boolean vector
-    for i in range(len(all_files)):
-        file_date_only = datetime.strptime(all_files[i][0:8],'%Y%m%d')
-        bool_iswithindate.append(file_date_only >= start_time.replace(hour=0, minute=0, second=0) and file_date_only <= end_time.replace(hour=0, minute=0, second=0))
-        
-    if not(np.any(bool_iswithindate)):
-        raise Exception("Date provided is not found in files :(")
-    
-    bool_iswithindate = np.array(bool_iswithindate)
-    # get indices that are TRUE (file with good date is present)
-    good_files = []
-    for i in range(len(all_files)):
-        # IF file is good
-        if bool_iswithindate[i]:
-            # ...then add it to the list
-            good_files.append(all_files[i])
-            
-    
+    all_time = np.expand_dims(np.arange(start_time, end_time, timedelta(minutes=time_step)).astype('datetime64[s]').astype(datetime), axis=1)
+    # return
+
     # initialize the variables to return
     vel_return = []
     velocity_latlon_return = []
     radar_latlon_return = []
-    radar_latlon_index_return = []
+    radar_latlon_indef_return = []
     
     if datatype.lower() == "2.5" or datatype.lower() == "3.0":
         # loop through each file in the directory, opening each one and appending the relevant data to the output
-        for radar_iteration, filename in enumerate(good_files):
-            print("Reading file " + filename)
+        for ir, f in enumerate(good_files):
+            print("Reading file " + f)
             t1 = time.time()
             # open the file
-            container = xr.load_dataset(os.path.join(directory, filename))
+            container = xr.load_dataset(f)
         
             # handle the dates by adding an offset so it can be converted to Python's datetime format
-            mjd_offset = np.datetime64('1858-11-17') # an offset parameter to convert the julian date to datetime properly
-            radar_time = (container["mjd"].values + mjd_offset).astype('datetime64[s]').astype(datetime) # datetime format of the radar beams
-    
+            # mjd_offset = np.datetime64('1858-11-17') # an offset parameter to convert the julian date to datetime properly
+            # radar_time = (container["mjd"].values + mjd_offset).astype('datetime64[s]').astype(datetime) # datetime format of the radar beams
+            radar_time = round2minute(mjd2datetime(container["mjd"].values))
+            # idtt = (radar_time >= start_time) & (radar_time <= end_time)
+            # radar_time = radar_time[idtt]
+            print (radar_time.shape, all_time.shape)
             # compute the time difference between the time of radar scan compared to a standard clock interval
             timediff = radar_time - all_time
     
@@ -156,7 +164,7 @@ def read_superDARN(directory, datatype, start_time = "none", end_time = "none", 
     
             # loop over each time and arrange properly
             for i in range(0, np.size(bool_check, 0)):
-                # get the logical array for indexing
+                # get the logical array for indefing
                 bool_select = bool_check[i, :]
                 
                 # obtain velocity measurements and the beam angles
@@ -165,8 +173,8 @@ def read_superDARN(directory, datatype, start_time = "none", end_time = "none", 
                 bearing_select = container.attrs["brng_at_15deg_el"]
             
                 # obtain latitude and longitude of velocity measurements
-                lat_select = container["lat"][bool_select].values[:, np.newaxis] # deg
-                lon_select = container["lon"][bool_select].values[:, np.newaxis] # deg
+                lat_select = container["lat"][bool_select].values[:, np.newafis] # deg
+                lon_select = container["lon"][bool_select].values[:, np.newafis] # deg
             
                 # get rid of ground scatter measurements
                 bool_notgroundscatter = container["gflg"][bool_select].values == 0
@@ -185,83 +193,85 @@ def read_superDARN(directory, datatype, start_time = "none", end_time = "none", 
                 velocity_latlon_select = np.hstack((lat_select, lon_select))
                 radar_latlon_select = (container.attrs["lat"], container.attrs["lon"])
                 
-                # label each radar_latlon point with an index that is the same as the iteration number of the inner for loop
+                # label each radar_latlon point with an indef that is the same as the iteration number of the inner for loop
                 len_vel = np.size(vel_radar, 0)
-                radar_latlon_index_select = np.tile(radar_iteration, (len_vel, 1))
+                radar_latlon_indef_select = np.tile(ir, (len_vel, 1))
                 
                 # arrange selected velocities into one structure
                 if i >= len(vel_return):
                     vel_return.append(vel_radar)
                     velocity_latlon_return.append(velocity_latlon_select)
                     radar_latlon_return.append(radar_latlon_select)
-                    radar_latlon_index_return.append(radar_latlon_index_select)
+                    radar_latlon_indef_return.append(radar_latlon_indef_select)
                 else:
                     vel_return[i] = np.vstack((vel_return[i], vel_radar))
                     velocity_latlon_return[i] = np.vstack((velocity_latlon_return[i], velocity_latlon_select))
                     radar_latlon_return[i] = np.vstack((radar_latlon_return[i], radar_latlon_select))
-                    radar_latlon_index_return[i] = np.vstack((radar_latlon_index_return[i], radar_latlon_index_select))
+                    radar_latlon_indef_return[i] = np.vstack((radar_latlon_indef_return[i], radar_latlon_indef_select))
                 t2 = time.time()
-            print("\tFile " + filename + " read in " + "{:.2f}".format(t2-t1) + " seconds.")
+            print("\tFile " + f + " read in " + "{:.2f}".format(t2-t1) + " seconds.")
         
     elif datatype.lower() == "v3_grid":
         # loop through each file in the directory, opening each one and appending the relevant data to the output
-        for radar_iteration, filename in enumerate(good_files):
-            print("Reading file " + filename)
+        for ir, f in enumerate(good_files):
+            print("Reading file " + f)
             t1 = time.time()
             # open the file
-            container = xr.load_dataset(os.path.join(directory, filename))
+            X = xr.load_dataset(f)
             
             # handle the dates by adding an offset so it can be converted to Python's datetime format
-            mjd_offset = np.datetime64('1858-11-17') # an offset parameter to convert the julian date to datetime properly
-            radar_time = (container["mjd_start"].values + mjd_offset).astype('datetime64[s]').astype(datetime) # datetime format of the radar beams
-    
+            radar_time = round2minute(mjd2datetime(X["mjd_start"].values))
             # compute the time difference between the time of radar scan compared to a standard clock interval
+            # mjd_offset = np.datetime64('1858-11-17') # an offset parameter to convert the julian date to datetime properly
+            # radar_time = (X["mjd_start"].values + mjd_offset).astype('datetime64[s]').astype(datetime) # datetime format of the radar beams
             timediff = radar_time - all_time
-    
+            # imediff1 = radar_time - all_time
+            # print(imediff)
+            # return
             # generate a 2D logical array that corresponds to the bits of data that go with a specified time
             bool_check = np.logical_and(timediff < timedelta(minutes=time_step), timediff >= timedelta(minutes=0))
     
             # loop over each time and arrange properly
             for i in range(0, np.size(bool_check, 0)):
-                # get the logical array for indexing
-                bool_select = bool_check[i, :]
+                # get the logical array for indefing
+                idt = bool_check[i, :]
                 
-                lat_select = container["vector.glat"][bool_select].values[:, np.newaxis] # deg
-                lon_select = container["vector.glon"][bool_select].values[:, np.newaxis] # deg
-                g_azimuth_angle = container["vector.g_kvect"][bool_select].values # azimuth angle [deg]
-                weighted_mean_velocity = container["vector.vel.median"][bool_select].values # m/s
-                vel_direction_plusminus = container["vector.vel.dirn"][bool_select].values # direction of velocity. +1 away from radar, -1 towards
+                lat_select = X["vector.glat"][idt].values[:, np.newaxis] # deg
+                lon_select = X["vector.glon"][idt].values[:, np.newaxis] # deg
+                azimuth = X["vector.g_kvect"][idt].values # azimuth angle [deg]
+                velocity_magnitude = X["vector.vel.median"][idt].values # m/s
+                velocity_direction = X["vector.vel.dirn"][idt].values # direction of velocity. +1 away from radar, -1 towards
                 
                 # get coordinates
                 velocity_latlon_select = np.hstack((lat_select, lon_select))
-                radar_latlon_select = (container.attrs["lat"], container.attrs["lon"])
+                radar_latlon_select = (X.attrs["lat"], X.attrs["lon"])
                 
                 # compute velocity in N-E-D frame
-                vel_select = geographic_azimuth_to_velframe(weighted_mean_velocity, g_azimuth_angle, vel_direction_plusminus)
+                vel_ned = geographic_azimuth_to_velframe(velocity_magnitude, azimuth, velocity_direction)
                 
-                # label each radar_latlon point with an index that is the same as the iteration number of the inner for loop
-                len_vel = np.size(vel_select, 0)
-                radar_latlon_index_select = np.tile(radar_iteration, (len_vel, 1))
+                # label each radar_latlon point with an indef that is the same as the iteration number of the inner for loop
+                # len_vel = vel_ned.shape[0]#np.size(vel_select, 0)
+                radar_latlon_indef_select = np.tile(ir, (vel_ned.shape[0], 1))
                 
                 # arrange selected velocities into one structure
                 if i >= len(vel_return):
-                    vel_return.append(vel_select)
+                    vel_return.append(vel_ned)
                     velocity_latlon_return.append(velocity_latlon_select)
                     radar_latlon_return.append(np.array(radar_latlon_select)[np.newaxis, :])
-                    radar_latlon_index_return.append(radar_latlon_index_select)
+                    radar_latlon_indef_return.append(radar_latlon_indef_select)
                 else:
-                    vel_return[i] = np.vstack((vel_return[i], vel_select))
+                    vel_return[i] = np.vstack((vel_return[i], vel_ned))
                     velocity_latlon_return[i] = np.vstack((velocity_latlon_return[i], velocity_latlon_select))
                     radar_latlon_return[i] = np.vstack((radar_latlon_return[i], radar_latlon_select))
-                    radar_latlon_index_return[i] = np.vstack((radar_latlon_index_return[i], radar_latlon_index_select))
+                    radar_latlon_indef_return[i] = np.vstack((radar_latlon_indef_return[i], radar_latlon_indef_select))
                 t2 = time.time()
-            print("\tFile " + filename + " read in " + "{:.2f}".format(t2-t1) + " seconds.")
+            print("\tFile " + f + " read in " + "{:.2f}".format(t2-t1) + " seconds.")
     
     else:
         print("Unknown SuperDARN data format")
         
     # collect the output, and return!
-    collected_output = [vel_return, velocity_latlon_return, radar_latlon_return, radar_latlon_index_return]
+    collected_output = [vel_return, velocity_latlon_return, radar_latlon_return, radar_latlon_indef_return]
     
     return (collected_output, all_time)
 
@@ -279,23 +289,23 @@ def place_poles(latlim, lonlim, lat_step, lon_step, velocity_latlon = "none", de
         lonlim - longitude limits [lower, upper]
         lat_step - the spacing in degrees of the meshgrid in the latitude direction
         lon_step - the spacing in degrees of the meshgrid in the longitude direction
-        velocity_latlon - used to inform the placement of poles in a variable density placement scheme. dims [number of velocity x 2 (lat, lon)]
+        velocity_latlon - used to inform the placement of poles in a variable density placement scheme. dims [number of velocity f 2 (lat, lon)]
             default: "none", which means the poles are just a meshgrid of points put into a 2D list
             IF velocity_latlon is a list of locations, the poles will be variably spaced, clustering around these lat/lon points.
                 the density far from the points is determined by the AVERAGE of lat_step and lon_step
-        density_strength - how much extra density the proximity to input measuremeents causes
+        density_strength - how much eftra density the profimity to input measuremeents causes
             IF velocity_latlon is "none", this does nothing
-        max_density - the lowest radius (most dense) the poles can be spaced
+        maf_density - the lowest radius (most dense) the poles can be spaced
             IF velocity_latlon is "none", this does nothing
         close_tolerance - the radius of effect that an input measurement has
             IF velocity_latlon is "none", this does nothing
     
     OUTPUTS:
         poles_latlon - a 2D array containing all the lat/lon points. this list is 2D because the lat and lon meshgrids are reshaped to a 1D column vector and placed pair-wise
-        dims: [number of pole points x 2 (lat, lon in degrees)]
+        dims: [number of pole points f 2 (lat, lon in degrees)]
     '''
     
-    # extract variables
+    # eftract variables
     lat_min = np.floor(latlim[0])
     lat_max = np.floor(latlim[1])
     
@@ -315,13 +325,13 @@ def place_poles(latlim, lonlim, lat_step, lon_step, velocity_latlon = "none", de
         # reshape the above meshgrid into a 2D list of poles (lat, lon)
         poles_latlon = np.hstack((lat_s.reshape([-1, 1]),
                                       lon_s.reshape([-1, 1])))
-        # exit function
+        # efit function
         return (np.size(poles_latlon, 0), poles_latlon)
     
-    # otherwise, continue executing the code
+    # otherwise, continue efecuting the code
     # velocity_latlon is given as a list, and place the SECS poles in a variable-spacing, variable-density manner
 
-    # generate grid of points. this is a meshgrid of 1x1 degree spacing in (lat x lon)
+    # generate grid of points. this is a meshgrid of 1f1 degree spacing in (lat f lon)
     [lat_s, lon_s] = np.meshgrid(np.arange(lat_min, lat_max+0.1, 1), np.arange(lon_min, lon_max+0.1, 1))
 
     # reshape the above meshgrid into a 2D list of poles (lat, lon)
@@ -335,7 +345,7 @@ def place_poles(latlim, lonlim, lat_step, lon_step, velocity_latlon = "none", de
 
     # input discrete density function
     # units are radius in degrees of each point
-    # each entry specifies the approximate number of degrees the resulting poles would like to be from each other at the specific corresponding lat/lon
+    # each entry specifies the approfimate number of degrees the resulting poles would like to be from each other at the specific corresponding lat/lon
     # this varies for each lat/lon, and the poles will distribute themselves accordingly
     global_step = (lat_step + lon_step) / 2 # the global density step
     density_input = np.zeros((np.size(poles_latlon_initial, 0), 1)) # initialize
@@ -353,7 +363,6 @@ def place_poles(latlim, lonlim, lat_step, lon_step, velocity_latlon = "none", de
     # perform the poisson disk sampling algorithm.
     # THANK YOU ADRIAN BITTNER
     (num_poles, poles_latlon) = poissonDiskSampling(poles_latlon_initial, lat_min, lat_max, lon_min, lon_max, density_input, num_iterations)
-
     
     return (num_poles, poles_latlon)
     
@@ -377,7 +386,7 @@ def place_prediction(latlim, lonlim, lat_step, lon_step):
         dims: [number of prediction points x 2 (lat, lon in degrees)]
     '''
     
-    # extract inputs
+    # eftract inputs
     lat_min = latlim[0]
     lat_max = latlim[1]
     
@@ -452,7 +461,7 @@ def predict_with_SECS(radar_velocity_frame_i, velocity_latlon, pred_latlon, pole
 def compute_num_closeto(interest_latlon, closeto_latlon, angular_tolerance=1):
     '''
     this function computes if the positions in pred_latlon are within a tolerance (in degrees) to a list of points given in closeto_latlon.
-    returns a matrix that identifies TRUE (is close) or FALSE (is not close) corresponding to the entries in pred_latlon
+    returns a matrif that identifies TRUE (is close) or FALSE (is not close) corresponding to the entries in pred_latlon
     TRUE - entry is positive integer. the specific number identifies the number of CLOSE_TO that is within angular_tolerance
     FALSE - entry is zero
     
@@ -469,8 +478,8 @@ def compute_num_closeto(interest_latlon, closeto_latlon, angular_tolerance=1):
     OUTPUTS:
         num_isclose - a list of integers, the bool of which identifies TRUE/FALSE.
             TRUE - interest_latlon is within tolerance to at least one closeto_latlon point.
-            FALSE - the selected interest_latlon point is not within tolerance to ANY closeto_latlon
-            dims: [number of interest lat/lon locations x nothing]
+            xALSE - the selected interest_latlon point is not within tolerance to ANY closeto_latlon
+            dims: [number of interest lat/lon locations f nothing]
     '''
     # find SECS pred outputs that are within a tolerance to a velocity measurement
     
@@ -503,7 +512,7 @@ def compute_close_and_far(velocity_vectors, vel_latlon, closeto_latlon, angular_
         closeto_latlon - the list of lat/lon positions that we are comparing if a different lat/lon point is close to
             dims: [number of desired comparison lat/lon points x 2 (lat, lon in degrees)]
         
-        angular_tolerance - optional parameter to define the maximum angular separation to define the velocity_vector being close or far from any closeto_latlon points
+        angular_tolerance - optional parameter to define the mafimum angular separation to define the velocity_vector being close or far from any closeto_latlon points
         
     OUTPUTS:
         velocity_vector_close - the set of vectors which are within the angular tolerance of ANY closeto_latlon
@@ -574,7 +583,7 @@ def return_interior_input_velocities(velocity, velocity_latlon, latlim, lonlim):
     bool_keep = (velocity_latlon[:, 0] >= latlim[0]) & (velocity_latlon[:, 0] <= latlim[1]) & (velocity_latlon[:, 1] >= lonlim[0]) \
                     & (velocity_latlon[:, 1] <= lonlim[1])
     
-    # extract the velocity vectors and velocity vector locations that we desire
+    # eftract the velocity vectors and velocity vector locations that we desire
     velocity_cut = velocity[bool_keep, :]
     velocity_latlon_cut = velocity_latlon[bool_keep, :]
     
