@@ -4,10 +4,13 @@ Bridson (2007) adapted to support spatially varying sampling radii.
 
 Adrian Bittner, 2021
 Published under MIT license. 
+
+Prodedure updated to support placing point on an arbitrary grid
+2023-2024
+Work supported by NASA GSFC 80GSFC22CA011
 """
 
 import numpy as np
-
 
 def compute_bool_shouldcompare(interest_latlon, seed_point, angular_tolerance):
     '''
@@ -86,7 +89,7 @@ def compute_bool_closeto(interest_latlon, closeto_latlon, seed_point, angular_to
     return bool_isclose
 
 
-def poissonDiskSampling(latlon, lat_min, lat_max, lon_min, lon_max, radius, k=30):
+def poissonDiskSampling(xgrid, ygrid, lat_min, lat_max, lon_min, lon_max, radius, k=30):
     """
     Implementation of the Poisson Disk Sampling algorithm.
 
@@ -109,13 +112,9 @@ def poissonDiskSampling(latlon, lat_min, lat_max, lon_min, lon_max, radius, k=30
     '''
     
     # Pick initial (active) point
-    #np.random.seed(2) # TEMPORARY!!!! put here for debugging purposes
-    # linearly interpolate between the latitude and longitude limits, respectively
-    coords = np.zeros((2, 1))
-    coords[0] = np.random.random() * (lat_max - lat_min) + lat_min # latitude
-    coords[1] = np.random.random() * (lon_max - lon_min) + lon_min # longitude
+    coords = np.array([np.random.uniform(ygrid.min(),ygrid.max()), np.random.uniform(xgrid.min(),xgrid.max())])
     nParticle = 1
-
+    
     # Initialise active queue
     queue = np.empty([0, 2])
     queue = np.vstack((queue, coords.transpose())) # Appending to list is much quicker than to numpy array, if you do it very often
@@ -127,41 +126,39 @@ def poissonDiskSampling(latlon, lat_min, lat_max, lon_min, lon_max, radius, k=30
         # Pick random element in active queue
         idx = np.random.randint(np.size(queue, 0))
         activeCoords = queue[idx]
-        nearest_latlon = np.floor(activeCoords).astype('int')    
-        nearest_latlon_index = np.logical_and(nearest_latlon[0] == latlon[:, 0], nearest_latlon[1] == latlon[:, 1])
-
+        idxx = abs(xgrid[0,:] - activeCoords[1]).argmin()
+        idyy = abs(ygrid[:,0] - activeCoords[0]).argmin()
         # Pick radius for new sample particle ranging between 1 and 2 times the local radius
-        radius_pt = radius[nearest_latlon_index]
-        newRadius_d = radius_pt * (np.random.random(k) + 1)[:, np.newaxis]
-        newRadius = newRadius_d * np.pi/180 # convert to radians
-        
+        radius_pt = radius[idyy,idxx]
+        newRadius_d = radius_pt * (np.random.random(k) + 1)#[:, np.newaxis]
+        newRadius = np.radians(newRadius_d) # convert to radians
         # Pick the angle to the sample particle and determine its coordinates
-        angle = 2 * np.pi * np.random.random(k)[:, np.newaxis]
+        angle = 2 * np.pi * np.random.random(k)#[:, np.newaxis]
         newCoords = np.zeros((k, 2))
-
         # find new coordinates utilizing spherical coordinates. the randomly selected radius and angle
         # define the angular separation and angle, repsectively, from the point
-        lat1 = activeCoords[0] * np.pi/180
-        lon1 = activeCoords[1] * np.pi/180
-        
-        newCoords[:, [0]] = np.arcsin(np.sin(lat1) * np.cos(newRadius) + np.cos(lat1) * np.sin(newRadius) * np.cos(angle))
-        newCoords[:, [1]] = lon1 + np.arctan2(np.sin(angle) * np.sin(newRadius) * np.cos(lat1), np.cos(newRadius) - np.sin(lat1) * np.sin(newCoords[:, [0]]))
+        lat1 = np.radians(activeCoords[0])
+        lon1 = np.radians(activeCoords[1])
+
+        newCoords[:, 0] = np.arcsin(np.sin(lat1) * np.cos(newRadius) + np.cos(lat1) * np.sin(newRadius) * np.cos(angle))
+        newCoords[:, 1] = lon1 + np.arctan2(np.sin(angle) * np.sin(newRadius) * np.cos(lat1), np.cos(newRadius) - np.sin(lat1) * np.sin(newCoords[:, 0]))
         
         # convert back to degrees
-        newCoords = newCoords * 180/np.pi
+        newCoords = np.degrees(newCoords)
         
         # Prevent that the new particle is outside of the grid
-        bool_inclusive = (newCoords[:, [0]] >= lat_min) & (newCoords[:, [0]] <= lat_max) & (newCoords[:, [1]] >= lon_min) & (newCoords[:, [1]] <= lon_max)
-        newCoords = newCoords[bool_inclusive.squeeze(), :]
-        newRadius_d = newRadius_d[bool_inclusive.squeeze(), :]
+        bool_inclusive = (newCoords[:, 0] >= lat_min) & (newCoords[:, 0] <= lat_max) & (newCoords[:, 1] >= lon_min) & (newCoords[:, 1] <= lon_max)
+        newCoords = newCoords[bool_inclusive]
+        newRadius_d = newRadius_d[bool_inclusive]
         
+        # TODO - We want this to be in units of KM
         # perform the logical check to find if there are any close points to the k-amount of generated points. if so, IGNORE THESE POINTS
         bool_isclose = compute_bool_closeto(newCoords, particleCoordinates, activeCoords, radius_pt)
+        
         check = np.where(np.logical_not(bool_isclose))[0]
         if (np.size(check)):
             # No conflicts detected. Create a new particle at this position!
             index_isclose = check[0]
-
             queue = np.vstack((queue, newCoords[[index_isclose], :]))
             particleCoordinates = np.vstack((particleCoordinates, newCoords[[index_isclose], :]))
             nParticle += 1
@@ -171,4 +168,4 @@ def poissonDiskSampling(latlon, lat_min, lat_max, lon_min, lon_max, radius, k=30
             queue = np.delete(queue, idx, 0)
             continue
 
-    return(nParticle, particleCoordinates)
+    return particleCoordinates
