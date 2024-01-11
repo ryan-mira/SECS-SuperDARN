@@ -27,6 +27,11 @@ D_los_east = D['velocity_east'][idt].values
 D_los_north = D['velocity_north'][idt].values
 D_los = np.vstack((D_los_east, D_los_north)).T
 D_los_latlon = np.vstack((D['lat'][idt].values, D['lon'][idt].values)).T
+D_radar_latlon = np.vstack((D["radar_lat"][idt].values, D["radar_lon"][idt].values)).T
+# Convert the array to a list of tuples
+pairs_list = [tuple(row) for row in D_radar_latlon]
+# Get unique pairs
+radar_latlon = np.array(list(set(pairs_list))).squeeze()
 
 xg, yg, rad, prediction_grid = SD.discretize([40,90], [-180,180], 2, 5, velocity_latlon = D_los_latlon, debugging=1, density_function='gauss', density_min=1, density_max=4)
 
@@ -49,7 +54,7 @@ ax = fig.add_subplot(111)
 ax.set_title(f"SECS output at {T}")
 Q = ax.quiver(D_los_latlon[:,1], D_los_latlon[:,0], 
               D_los[:,0], D_los[:,1],
-              color = 'r', scale = 10000, width=0.0035)
+              color = 'r', scale = 10000, width=0.0015)
 qk = plt.quiverkey(Q, 0.85, 1.025, 500,
                 '500 m s$^{-1}$)',
                 labelpos='E',
@@ -79,10 +84,12 @@ ax = fig.add_subplot(111)
 ax.set_title(f"SECS output at {T}")
 Q = ax.quiver(prediction_grid[vel_close,1], prediction_grid[vel_close,0], 
                     prediction_velocity[vel_close,0], prediction_velocity[vel_close,1],
-                    color = 'b', scale = 10000, width=0.0035)
+                    color = 'b', scale = 10000, width=0.0015)
 ax.quiver(prediction_grid[~vel_close,1], prediction_grid[~vel_close,0], 
           prediction_velocity[~vel_close,0], prediction_velocity[~vel_close,1],
           color = 'k', scale = 10000, width=0.0015)
+
+ax.scatter(radar_latlon[:,1], radar_latlon[:,0], s=5, marker='x', c='r')
 qk = plt.quiverkey(Q, 0.85, 1.025, 500,
                 '500 m s$^{-1}$)',
                 labelpos='E',
