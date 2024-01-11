@@ -31,6 +31,16 @@ def eu_distance_angle(coord1, coord2):
     distance = np.sqrt(x**2 + y**2)
     return distance
 
+def eu_distance_km(coord1, coord2):
+    lat1, lon1 = coord1[0], coord1[1]
+    if len(coord2.shape) == 2:
+        lat2, lon2 = coord2[:,0], coord2[:,1]
+    else:
+        lat2, lon2 = coord2[0], coord2[1]
+    x = ((lon2 - lon1) * np.cos(0.5 * (np.radians(lat2) + np.radians(lat1)))) * 111.3
+    y = (lat2 - lat1) * 111.3
+    distance = np.sqrt(x**2 + y**2)
+    return distance
 
 def mjd2datetime(mjd):
     mjd_offset = np.datetime64('1858-11-17') # an offset parameter to convert the julian date to datetime properly
@@ -308,7 +318,9 @@ def velocity_isclose(secs_latlon, velocity_latlon, tolerance=1, units:str = 'ang
     if units == "angle":
         #Get an array with the closest observation to each SECS_VEL point
         distance = np.array([np.nanmin(eu_distance_angle(secs_latlon[i], velocity_latlon)) for i in range(secs_latlon.shape[0])])
-    
+    else:
+        #Get an array with the closest observation to each SECS_VEL point
+        distance = np.array([np.nanmin(eu_distance_km(secs_latlon[i], velocity_latlon)) for i in range(secs_latlon.shape[0])])
     idx[distance<=tolerance] = True
     
     return idx
