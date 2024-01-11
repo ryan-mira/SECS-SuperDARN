@@ -325,58 +325,43 @@ def velocity_isclose(secs_latlon, velocity_latlon, tolerance=1, units:str = 'ang
     
     return idx
 
-def compute_close_and_far(velocity_vectors, vel_latlon, closeto_latlon, angular_tolerance=1):
-    '''
-    this function computes if the positions in pred_latlon are within a tolerance (in degrees) to a list of points given in closeto_latlon.
-    the velocity vectors correspond to pred_latlon
-    this function calls compute_closeto, yet it has additional functionality
-    returns the list of velocity_vectors that are close, and the list of velocity_vectors that are far
+def secs_los_error(secs_vel, secs_latlon, los_mag, los_azimuth, los_latlon, debugging=False):
     
-    INPUTS:
-        velocity_vectors - the list of velocity vectors that we which to compute if they are close or far from a list of selected points
-            dims: [number of velocity vectors x 3 (x, y, z)]
-        
-        vel_latlon - the list of lat/lon positions that correspond to the input velocity_vectors
-            dims: [number of velocity vectors x 2 (lat, lon in degrees)]
+    difference = np.nan * np.ones(los_mag.size)
+    secs_to_los_input = np.nan * np.ones((los_mag.size, 2))
+    secs_to_los_coords = np.nan * np.ones((los_mag.size, 2))
+    secs_to_los_components = np.nan * np.ones((los_mag.size, 2))
+    # Remove celocity_Z if it is there
+    if secs_vel.shape[1] == 3:
+        secs_vel = secs_vel[:,:2]
+    j = 0
+    for i in range(los_mag.shape[0]):
+        distance = np.array([eu_distance_km(los_latlon[i], tt) for tt in secs_latlon])
+        id0 = np.argmin(distance) if distance[np.argmin(distance)] < 2 else None
+        if id0 is not None:
+            #SECS components, magnitude, and bearing angle
+            secs_to_los_input[i] = secs_vel[id0]
+            secs_ve, secs_vn = secs_to_los_input[i]
+            secs_mag = np.sqrt(secs_ve**2 + secs_vn**2)
+            secs_bearing = (90 - np.degrees(np.arctan2(secs_vn, secs_ve))) if (90 - np.degrees(np.arctan2(secs_vn, secs_ve))) < 180 else (90 - np.degrees(np.arctan2(secs_vn, secs_ve))-360)
+            bearing_difference = los_azimuth[i] - secs_bearing
+            #SECS to SuperDARN-LOS
+            secs_to_los = secs_mag * np.cos(np.radians(bearing_difference)) #* bearing_direction
             
-        closeto_latlon - the list of lat/lon positions that we are comparing if a different lat/lon point is close to
-            dims: [number of desired comparison lat/lon points x 2 (lat, lon in degrees)]
-        
-        angular_tolerance - optional parameter to define the mafimum angular separation to define the velocity_vector being close or far from any closeto_latlon points
-        
-    OUTPUTS:
-        velocity_vector_close - the set of vectors which are within the angular tolerance of ANY closeto_latlon
-            dims: [number of close velocity vectors x 3 (x, y, z)]
+            secs_to_los_components[i] = secs_to_los * np.sin(np.radians(los_azimuth[i])), secs_to_los * np.cos(np.radians(los_azimuth[i])) 
+            secs_to_los_coords[i] = secs_latlon[id0]
             
-        velocity_vector_far - the set of vectors which are NOT within the angular tolerance of ANY closeto_latlon
-            dims: [number of far velocity vectors x 3 (x, y, z)]
+            difference[i] = los_mag[i] - secs_to_los
+            
+        else:
+            secs_to_los_coords[i] = los_latlon[i]
+            secs_to_los_components[i] = [np.nan, np.nan]
+            j+=1 
+    if j > 0:
+        print (f"Didn't find a pair for {j} LOS inputs")
         
-        vel_latlon_close - the list of lat/lon positions which correspond to velocity_vector_close
-            dims: [number of close velocity vectors x 3 (x, y, z)]
-        
-        vel_latlon_far - the list of lat/lon positions which corerspond to velocity_vector_far
-            dims: [number of far velocity vectors x 3 (x, y, z)]
-    '''
-    # compute the boolean if a prediction velocity_vector location is close to a input velocity 
-    bool_isclose = compute_num_closeto(vel_latlon, closeto_latlon, angular_tolerance).astype(bool)
-    # initialize
-    velocity_vector_close = np.zeros((np.count_nonzero(bool_isclose), 3))
-    velocity_vector_far = np.zeros(((np.count_nonzero(np.logical_not(bool_isclose)), 3)))
-    vel_latlon_close = np.zeros((np.count_nonzero(bool_isclose), 2))
-    vel_latlon_far = np.zeros(((np.count_nonzero(np.logical_not(bool_isclose)), 2)))
-
-    # set close output vectors
-    velocity_vector_close[:, 0] = velocity_vectors[bool_isclose, 0]
-    velocity_vector_close[:, 1] = velocity_vectors[bool_isclose, 1]
-    velocity_vector_close[:, 2] = velocity_vectors[bool_isclose, 2]
-    vel_latlon_close[:, 0] = vel_latlon[bool_isclose, 0]
-    vel_latlon_close[:, 1] = vel_latlon[bool_isclose, 1]
-
-    # set the far output vectors
-    velocity_vector_far[:, 0] = velocity_vectors[np.logical_not(bool_isclose), 0]
-    velocity_vector_far[:, 1] = velocity_vectors[np.logical_not(bool_isclose), 1]
-    velocity_vector_far[:, 2] = velocity_vectors[np.logical_not(bool_isclose), 2]
-    vel_latlon_far[:, 0] = vel_latlon[np.logical_not(bool_isclose), 0]
-    vel_latlon_far[:, 1] = vel_latlon[np.logical_not(bool_isclose), 1]
-    
-    return (velocity_vector_close, velocity_vector_far, vel_latlon_close, vel_latlon_far)
+    if debugging:
+        return secs_to_los_components, difference
+    else:
+        return difference
+            
