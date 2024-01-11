@@ -9,37 +9,70 @@ Created on Wed Jan 10 16:07:51 2024
 import numpy as np
 from datetime import datetime
 import SECSSD as SD
-import matplotlim.pyplot as plt
+import matplotlib.pyplot as plt
+import os
 
-folder = '/Users/mraks1/Library/CloudStorage/GoogleDrive-smrak@bu.edu/My Drive/SuperDARN_SECS/20130117/'
+folder = os.path.join(os.getcwd(), "northern_2015_march_1"+os.sep)
 
-t0 = datetime(2013,1,17,21,50)
-t1 = datetime(2013,1,17,22,10)
-D1 = SD.read_superDARN(folder+'data/v3_grid/', start_time=t0, datatype="v3_grid", end_time=t1)
+t0 = datetime(2015,3,1,21,50)
+t1 = datetime(2015,3,1,22,10)
+D = SD.read_superDARN(folder, start_time=t0, datatype="v3_grid", end_time=t1)
 
-T = datetime(2013,1,17,22,0)
+T = datetime(2015,3,1,22,0)
 
 # D1
-D1_time = D1['times_start'].values.astype('datetime64[s]').astype(datetime)
-idt1 = np.isin(D1_time, T)
-D1_los_east = D1['velocity_east'][idt1].values
-D1_los_north = D1['velocity_north'][idt1].values
-D1_los = np.vstack((D1_los_east, D1_los_north, np.zeros(D1_los_north.size))).T
-D1_los_xy = np.vstack((D1['lat'][idt1].values, D1['lon'][idt1].values)).T
+D_time = D['times_start'].values.astype('datetime64[s]').astype(datetime)
+idt = np.isin(D_time, T)
+D_los_east = D['velocity_east'][idt].values
+D_los_north = D['velocity_north'][idt].values
+D_los = np.vstack((D_los_east, D_los_north)).T
+D_los_latlon = np.vstack((D['lat'][idt].values, D['lon'][idt].values)).T
 
-
-xg1, yg1, rad1, prediction_grid = SD.discretize([40,90], [-180,180], 2, 5, velocity_latlon = D1_los_xy, debugging=1, density_function='gauss', density_min=1, density_max=4)
+xg, yg, rad, prediction_grid = SD.discretize([40,90], [-180,180], 2, 5, velocity_latlon = D_los_latlon, debugging=1, density_function='gauss', density_min=1, density_max=4)
 
 epsilon=0.05
 N = 7
 secs_velocity = np.nan * np.ones((N, prediction_grid.shape[0], 3))
 for i in range(N):
-    poles = SD.discretize([40,90], [-180, 180], 2, 5, velocity_latlon = D1_los_xy, density_function='gauss')
-    secs_velocity[i] = SD.predict_with_SECS(D1_los, D1_los_xy, prediction_grid, poles, epsilon=epsilon)
+    poles = SD.discretize([40,90], [-180, 180], 2, 5, velocity_latlon = D_los_latlon, density_function='gauss')
+    secs_velocity[i] = SD.predict_with_SECS(D_los, D_los_latlon, prediction_grid, poles, epsilon=epsilon)
 prediction_velocity = np.nanmedian(secs_velocity, axis=0)
 prediction_std = np.nanstd(secs_velocity, axis=0)
+prediction_std_magnitude = np.sqrt(prediction_std[:,0]**2, prediction_std[:,1]**2)
 
-vel_close = SD.velocity_isclose(prediction_grid, D1_los_xy)
+vel_close = SD.velocity_isclose(prediction_grid, D_los_latlon, tolerance=300, units="km")
+
+### Plotting
+
+fig = plt.figure(figsize=[8,5])
+ax = fig.add_subplot(111)
+ax.set_title(f"SECS output at {T}")
+Q = ax.quiver(D_los_latlon[:,1], D_los_latlon[:,0], 
+              D_los[:,0], D_los[:,1],
+              color = 'r', scale = 10000, width=0.0035)
+qk = plt.quiverkey(Q, 0.85, 1.025, 500,
+                '500 m s$^{-1}$)',
+                labelpos='E',
+                color='r')
+ax.grid()
+ax.set_xlabel("Longitude")
+ax.set_ylabel("Latitude")
+
+
+####
+
+fig = plt.figure(figsize=[8,5])
+ax = fig.add_subplot(111)
+ax.set_title(f"SECS output at {T}")
+Q = ax.pcolormesh(xg, yg, rad, cmap="jet")
+ax.scatter(poles[:,1], poles[:,0], s=18, c='m', marker='+', label="Poles")
+ax.scatter(D_los_latlon[:,1], D_los_latlon[:,0], s=2, c='w', label="LOS")
+ax.set_xlabel("Longitude")
+ax.set_ylabel("Latitude")
+plt.colorbar(Q, label="Density function")
+plt.legend(facecolor='k', edgecolor="none", labelcolor='w')
+
+##### SECS Solution
 
 fig = plt.figure(figsize=[8,5])
 ax = fig.add_subplot(111)
@@ -54,3 +87,19 @@ qk = plt.quiverkey(Q, 0.85, 1.025, 500,
                 '500 m s$^{-1}$)',
                 labelpos='E',
                 color='b')
+ax.set_xlabel("Longitude")
+ax.set_ylabel("Latitude")
+ax.grid()
+
+##### SECS STD
+
+fig = plt.figure(figsize=[8,5])
+ax = fig.add_subplot(111)
+ax.set_title(f"SECS Standard Deviation with {N} iterations")
+Q = ax.scatter(prediction_grid[:,1], prediction_grid[:,0], 
+               s=prediction_std_magnitude/10, edgecolor='k', marker='o', facecolor='none')
+ax.set_xlabel("Longitude")
+ax.set_ylabel("Latitude")
+ax.scatter(100, 35, s=50, color='k', marker='o', facecolors='none',)
+ax.text(108, 34.3, "sigma=50 m/s")
+ax.grid()
