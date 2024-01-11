@@ -168,6 +168,12 @@ def run_secs(radar_velocity_frame_i, velocity_latlon, pred_latlon, poles_latlon,
     r_p_frame_N = cartesian_from_latlon(poles_latlon[:, [0]], poles_latlon[:, [1]])
     r_pr_frame_N = cartesian_from_latlon(pred_latlon[:, [0]], pred_latlon[:, [1]])
     
+    
+    
+    # TODO - Remore the Z-component (3rd dimension) altogether
+    if len(radar_velocity_frame_i.shape) == 2:
+        radar_velocity_frame_i = np.hstack((radar_velocity_frame_i, np.zeros((radar_velocity_frame_i.shape[0],1))))
+
     # size_i is the number of velocity points
     # size_j is the number of SECS poles
     size_i = np.size(radar_velocity_frame_i, 0)
