@@ -20,6 +20,50 @@ from typing import Union
 from .perform_SECS import run_secs
 from .bridsonVariableRadius import poissonDiskSampling
 
+import time
+
+def compute_min_angular(interest_latgrid, interest_longrid, closeto_latlon):
+    '''
+    this function computes the minimum distance the interest_latlon points are to a list of points given in closeto_latlon.
+    
+    INPUTS:
+        interest_latlon - the 2D list of lat/lon positions that we are interested in checking how close they are to ""something""
+            
+        closeto_latlon - the 2D list of lat/lon positions that we define as the ""something"" which we are checking the interest_latlon with respect to
+            dims: [number of positions of interest x 2 (lat, lon in degrees)]
+            
+    OUTPUTS:
+        min_distance - the minimum distance in kilometers
+
+            dims: [number of interest lat x number of interet lon]
+    '''
+    # reshape interest_latlon to be a list of points [number of locations x 2]
+    
+    interest_lat = np.reshape(interest_latgrid, (-1, 1))
+    interest_lon = np.reshape(interest_longrid, (-1, 1))
+    
+    interest_latlon = np.hstack((interest_lat, interest_lon))
+    
+    closeto_rotate = np.transpose(closeto_latlon)
+    phi1 = interest_latlon[:, [0]] * np.pi/180
+    phi2 = closeto_rotate[[0], :] * np.pi/180
+    delta1 = interest_latlon[:, [1]] * np.pi/180
+    delta2 = closeto_rotate[[1], :] * np.pi/180
+
+    # compute the cosine of the angular separation
+    cos_angular_separation = np.sin(phi1) * np.sin(phi2) + np.cos(phi1) * np.cos(phi2) * np.cos(delta1 - delta2)
+    
+    # to find the minimum distance, compute the maximum cosine of angular separation
+    # compute across the rows, collapsing to a single column
+    max_cos = np.max(cos_angular_separation, 1)
+    
+    min_angular = np.arccos(max_cos) * 180/np.pi # degrees
+    
+    # reshape to original size
+    min_angular = np.reshape(min_angular, np.shape(interest_latgrid)) # could use either latgrid or longrid (since they are gridded, they have same 2D shape)
+    
+    return min_angular 
+
 def eu_distance_angle(coord1, coord2):
     lat1, lon1 = coord1[0], coord1[1]
     if len(coord2.shape) == 2:
@@ -191,11 +235,31 @@ def discretize(latlim:Union[list, np.ndarray], lonlim:Union[list, np.ndarray],
     xgrid, ygrid = np.meshgrid(np.arange(lonlim[0], lonlim[1]+.1, dlon), 
                                np.arange(latlim[0], latlim[1]+.1, dlat))
     if velocity_latlon is not None:
-        velocity_latlon = np.vstack((velocity_latlon, [90,10]))
-        rad = np.ones(xgrid.shape)
-        for i in range(xgrid.shape[0]):
-            for j in range(xgrid.shape[1]):
-                rad[i,j] = np.nanmin(np.array([eu_distance_angle((ygrid[i,j], xgrid[i,j]), velocity_latlon[k,:]) for k in range(velocity_latlon.shape[0])]))
+        #velocity_latlon = np.vstack((velocity_latlon, [90,10]))
+        #rad = np.ones(xgrid.shape)
+        #tt1 = time.time()
+        #for i in range(xgrid.shape[0]):
+        #    for j in range(xgrid.shape[1]):
+        #        rad[i,j] = np.nanmin(np.array([eu_distance_angle((ygrid[i,j], xgrid[i,j]), velocity_latlon[k,:]) for k in range(velocity_latlon.shape[0])]))
+        #tt2 = time.time()
+        #print("Time to find radius1 is: " + str(tt2 - tt1))
+        
+        ##### find radius more efficiently
+        #rad2 = compute_num_closeto()
+        
+        # save variables for use
+        #np.save("../xgrid", xgrid)
+        #np.save("../ygrid", ygrid)
+        #np.save("../velocity_latlon", velocity_latlon)
+        #np.save("../rad_validate", rad)
+        # validate the radius is correct
+        
+        # copmute the minimum radius from each grid point (lat, lon) to the velocity positions
+        rad = compute_min_angular(ygrid, xgrid, velocity_latlon) # degrees
+
+        ##### end
+        
+        
         print (datetime.now()-t1)
         #rad[rad>=1000] = 1000 km
         if density_function == None:
@@ -212,7 +276,10 @@ def discretize(latlim:Union[list, np.ndarray], lonlim:Union[list, np.ndarray],
             pass
         # TODO Implement more scaling functions, and convert them to KM instead of degrees
        
+        tt1 = time.time()
         samples_latlon = poissonDiskSampling(xgrid, ygrid, latlim[0], latlim[1], lonlim[0], lonlim[1], radius=rad, k=30)
+        tt2 = time.time()
+        print("Time to Poisson sample is: " + str(tt2 - tt1))
     else:
         samples_latlon = np.hstack((ygrid.reshape([-1,1]), xgrid.reshape([-1,1])))
         rad = np.nan * np.ones(samples_latlon.shape)
@@ -279,7 +346,7 @@ def predict_with_SECS(radar_los:np.ndarray,
 def compute_num_closeto(interest_latlon, closeto_latlon, angular_tolerance=1):
     '''
     this function computes if the positions in pred_latlon are within a tolerance (in degrees) to a list of points given in closeto_latlon.
-    returns a matrif that identifies TRUE (is close) or FALSE (is not close) corresponding to the entries in pred_latlon
+    returns a matrix that identifies TRUE (is close) or FALSE (is not close) corresponding to the entries in pred_latlon
     TRUE - entry is positive integer. the specific number identifies the number of CLOSE_TO that is within angular_tolerance
     FALSE - entry is zero
     
@@ -297,7 +364,7 @@ def compute_num_closeto(interest_latlon, closeto_latlon, angular_tolerance=1):
         num_isclose - a list of integers, the bool of which identifies TRUE/FALSE.
             TRUE - interest_latlon is within tolerance to at least one closeto_latlon point.
             xALSE - the selected interest_latlon point is not within tolerance to ANY closeto_latlon
-            dims: [number of interest lat/lon locations f nothing]
+            dims: [number of interest lat/lon locations x number of closeto_latlon locations]
     '''
     # find SECS pred outputs that are within a tolerance to a velocity measurement
     
@@ -310,6 +377,41 @@ def compute_num_closeto(interest_latlon, closeto_latlon, angular_tolerance=1):
     angular_separation = np.sin(phi1) * np.sin(phi2) + np.cos(phi1) * np.cos(phi2) * np.cos(delta1 - delta2)
     num_isclose = np.sum(angular_separation > np.cos(angular_tolerance * np.pi/180), 1)
     return num_isclose
+
+def compute_min_distance(interest_latgrid, interest_longrid, closeto_latlon):
+    '''
+    this function computes the minimum distance the interest_latlon points are to a list of points given in closeto_latlon.
+    
+    INPUTS:
+        interest_latlon - the 2D list of lat/lon positions that we are interested in checking how close they are to ""something""
+            
+        closeto_latlon - the 2D list of lat/lon positions that we define as the ""something"" which we are checking the interest_latlon with respect to
+            dims: [number of positions of interest x 2 (lat, lon in degrees)]
+            
+    OUTPUTS:
+        min_distance - the minimum distance in kilometers
+
+            dims: [number of interest lat x number of interet lon]
+    '''
+    # reshape interest_latlon to be a list of points [number of locations x 2]
+    
+    interest_lat = np.reshape(interest_latgrid, (-1, 1))
+    interest_lon = np.reshape(interest_longrid, (-1, 1))
+    
+    interest_latlon = np.hstack(interest_lat, interest_lon)
+    
+    closeto_rotate = np.transpose(closeto_latlon)
+    phi1 = interest_latlon[:, [0]] * np.pi/180
+    phi2 = closeto_rotate[[0], :] * np.pi/180
+    delta1 = interest_latlon[:, [1]] * np.pi/180
+    delta2 = closeto_rotate[[1], :] * np.pi/180
+
+    # compute the cosine of the angular separation
+    cos_angular_separation = np.sin(phi1) * np.sin(phi2) + np.cos(phi1) * np.cos(phi2) * np.cos(delta1 - delta2)
+    
+    # to find the minimum distance, compute the maximum cosine of angular separation
+    # compute across the rows, collapsing to a single column
+    max_cos = np.max(cos_angular_separation, 2)
 
 def velocity_isclose(secs_latlon, velocity_latlon, tolerance=1, units:str = 'angle'):
     assert units in ("angle", "km")
