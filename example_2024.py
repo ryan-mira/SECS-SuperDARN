@@ -39,9 +39,9 @@ epsilon=0.05
 N = 7
 secs_velocity = np.nan * np.ones((N, prediction_grid.shape[0], 3))
 for i in range(N):
+    print("Running SECS for " + D_time[0].strftime("%m-%d-%Y %H:%M:%S"))
     poles = SD.discretize([40,90], [-180, 180], 2, 5, velocity_latlon = D_los_latlon, density_function='gauss')
     secs_velocity[i] = SD.predict_with_SECS(D_los, D_los_latlon, prediction_grid, poles, epsilon=epsilon)
-    print(np.shape(poles))
 prediction_velocity = np.nanmedian(secs_velocity, axis=0)
 prediction_std = np.nanstd(secs_velocity, axis=0)
 prediction_std_magnitude = np.sqrt(prediction_std[:,0]**2, prediction_std[:,1]**2)

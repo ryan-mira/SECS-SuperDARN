@@ -159,6 +159,9 @@ def poissonDiskSampling(xgrid, ygrid, lat_min, lat_max, lon_min, lon_max, radius
         if (np.size(check)):
             # No conflicts detected. Create a new particle at this position!
             index_isclose = check[0]
+            if np.size(newCoords) == 0:
+                # break if there are no coordinates
+                break
             queue = np.vstack((queue, newCoords[[index_isclose], :]))
             particleCoordinates = np.vstack((particleCoordinates, newCoords[[index_isclose], :]))
             nParticle += 1

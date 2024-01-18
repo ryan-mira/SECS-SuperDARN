@@ -231,56 +231,82 @@ def discretize(latlim:Union[list, np.ndarray], lonlim:Union[list, np.ndarray],
                 density_min:Union[float,int] = 1,
                 debugging:bool = False):
  
-    t1 = datetime.now()
-    xgrid, ygrid = np.meshgrid(np.arange(lonlim[0], lonlim[1]+.1, dlon), 
-                               np.arange(latlim[0], latlim[1]+.1, dlat))
-    if velocity_latlon is not None:
-        #velocity_latlon = np.vstack((velocity_latlon, [90,10]))
-        #rad = np.ones(xgrid.shape)
-        #tt1 = time.time()
-        #for i in range(xgrid.shape[0]):
-        #    for j in range(xgrid.shape[1]):
-        #        rad[i,j] = np.nanmin(np.array([eu_distance_angle((ygrid[i,j], xgrid[i,j]), velocity_latlon[k,:]) for k in range(velocity_latlon.shape[0])]))
-        #tt2 = time.time()
-        #print("Time to find radius1 is: " + str(tt2 - tt1))
+    #t1 = datetime.now()
+    xgrid, ygrid = np.meshgrid(np.arange(lonlim[0], lonlim[1]+dlon, dlon), 
+                               np.arange(latlim[0], latlim[1]+dlat, dlat))
+    if density_function is not None:
         
-        ##### find radius more efficiently
-        #rad2 = compute_num_closeto()
-        
-        # save variables for use
-        #np.save("../xgrid", xgrid)
-        #np.save("../ygrid", ygrid)
-        #np.save("../velocity_latlon", velocity_latlon)
-        #np.save("../rad_validate", rad)
-        # validate the radius is correct
-        
-        # copmute the minimum radius from each grid point (lat, lon) to the velocity positions
-        rad = compute_min_angular(ygrid, xgrid, velocity_latlon) # degrees
+        # copmute the minimum radius from each grid point (lat, lon) to the velocity positions (if they are given)
+        if velocity_latlon is not None:
+            rad = compute_min_angular(ygrid, xgrid, velocity_latlon) # radius in degrees
+        else:
+            # ...then we want to run poisson disk algorithm but with no adaptive spacing -- just randomly spaced
+            rad = (dlat + dlon) / 2 * np.ones(np.shape(xgrid)) # average
+            
 
-        ##### end
-        
-        
-        print (datetime.now()-t1)
         #rad[rad>=1000] = 1000 km
-        if density_function == None:
-            pass
-        elif density_function == 'gauss':
+        if density_function == 'gauss':
             
             sigma = density_min * 2 #200 km
             A = 10 * (density_max - density_min) / 2 #4.5e1 #1e3 km
             mu = 0
             rad = density_max - (A / np.sqrt(2*np.pi*sigma**2) * np.e**-((rad-mu)/(2*sigma))**2)
-            #rad =  1 / (A / np.sqrt(2*np.pi*sigma**2) * np.e**-((rad-mu)/(2*sigma))**2) + 1
+            rad[rad<density_min] = density_min
         
+        elif density_function == 'num_near_logistic':
+        # ...do pole placement for artificial field
+
+            # for each entry in the list, compute the number of pole stations within a certain angular tolerance
+            # this informs the (discrete) density function of the input measurements,
+            # which is used to determine the (discrete) output of variably-spaced, variably-dense SECS poles
+
+            check_close = np.hstack((ygrid.reshape(-1, 1), xgrid.reshape(-1, 1)))          
+            #global_step = density_max
+            global_step = density_max
+            rad = np.zeros((np.size(xgrid), 1)) # initialize
+
+            num_close = compute_num_closeto(check_close, velocity_latlon, angular_tolerance=0.2)[:, np.newaxis]
+
+            # quick fix
+            a = density_max
+            b = density_min
+            density_min = a
+            density_max = b
+            density_curvature = 4
+            # quick fix
+            
+            # set the density input using a mask and a mathematical function
+            # using a slightly modified logistic function to generate nicely spaced density gradients
+            rad[num_close == 0] = global_step # radius spacing of poles far from input measurements
+            rad[num_close != 0] = 1.5*(global_step - density_max) / (1 + np.e**(0.4*density_curvature * (num_close[num_close != 0] - 1))) + density_max # radius spacing for poles near input measurements
+            
+            
+            rad = rad.reshape(np.shape(xgrid))
+            #rad = density_min - rad + density_max
+            
+            ## TEMP
+            #import matplotlib.pyplot as plt
+            #fig, ax = plt.subplots()
+            #c = ax.pcolormesh(xgrid, ygrid, rad, cmap='RdBu', vmin=0, vmax=1)
+            #ax.axis([xgrid.min(), xgrid.max(), ygrid.min(), ygrid.max()])
+            #fig.colorbar(c, ax=ax)
+            #print(np.min(rad))
+            #print(np.max(rad))
+            #print(break_here)
+            ## END TEMP
+            
+            
+        elif density_function == 'blue_noise':
+            # implement blue noise -- random spacing with no density variations
+            rad = (dlat + dlon) / 2 * np.ones(np.shape(xgrid)) # average (put this line of code again)
         else:
             pass
         # TODO Implement more scaling functions, and convert them to KM instead of degrees
        
-        tt1 = time.time()
         samples_latlon = poissonDiskSampling(xgrid, ygrid, latlim[0], latlim[1], lonlim[0], lonlim[1], radius=rad, k=30)
-        tt2 = time.time()
-        print("Time to Poisson sample is: " + str(tt2 - tt1))
+
     else:
+        # no velocity or density function provided, so just return a meshgrid
         samples_latlon = np.hstack((ygrid.reshape([-1,1]), xgrid.reshape([-1,1])))
         rad = np.nan * np.ones(samples_latlon.shape)
         
@@ -324,10 +350,12 @@ def predict_with_SECS(radar_los:np.ndarray,
         print("No radar velocity data, skipping SECS algorithm...")
         return 0
     
-    # check that the poles do not coincide with a velocity measurement or a prediciton location
-    overlap_tolerance = 0.05 # degrees
-    # WE don't really need to remove prediction_points colocated with radar_los????
-    bool_overlap = compute_num_closeto(poles_latlon, velocity_latlon, angular_tolerance=overlap_tolerance).astype(bool) # check velocity locations
+    # check if pole location coincides with a velocity measurement location OR pole location coincides with prediction location
+    # if so, remove the offending pole. otherwise, a division by zero will occur (zero angular separation)
+    overlap_tolerance = 0.005 # degrees
+    bool_overlap1 = compute_num_closeto(poles_latlon, velocity_latlon, angular_tolerance=overlap_tolerance).astype(bool) # check velocity locations
+    bool_overlap2 =  compute_num_closeto(poles_latlon, pred_latlon, angular_tolerance=overlap_tolerance).astype(bool) # check prediction locations
+    bool_overlap = np.logical_or(bool_overlap1, bool_overlap2)
     # delete the poles that are too close to either the velociy OR prediction locations
     poles_latlon = poles_latlon[~bool_overlap, :]
     
@@ -346,7 +374,7 @@ def predict_with_SECS(radar_los:np.ndarray,
 def compute_num_closeto(interest_latlon, closeto_latlon, angular_tolerance=1):
     '''
     this function computes if the positions in pred_latlon are within a tolerance (in degrees) to a list of points given in closeto_latlon.
-    returns a matrix that identifies TRUE (is close) or FALSE (is not close) corresponding to the entries in pred_latlon
+    returns a matrix that identifies TRUE (is close) or FALSE (is not close) corresponding to the entries in interest_latlon
     TRUE - entry is positive integer. the specific number identifies the number of CLOSE_TO that is within angular_tolerance
     FALSE - entry is zero
     
@@ -363,7 +391,7 @@ def compute_num_closeto(interest_latlon, closeto_latlon, angular_tolerance=1):
     OUTPUTS:
         num_isclose - a list of integers, the bool of which identifies TRUE/FALSE.
             TRUE - interest_latlon is within tolerance to at least one closeto_latlon point.
-            xALSE - the selected interest_latlon point is not within tolerance to ANY closeto_latlon
+            FALSE - the selected interest_latlon point is not within tolerance to ANY closeto_latlon
             dims: [number of interest lat/lon locations x number of closeto_latlon locations]
     '''
     # find SECS pred outputs that are within a tolerance to a velocity measurement
@@ -378,43 +406,45 @@ def compute_num_closeto(interest_latlon, closeto_latlon, angular_tolerance=1):
     num_isclose = np.sum(angular_separation > np.cos(angular_tolerance * np.pi/180), 1)
     return num_isclose
 
-def compute_min_distance(interest_latgrid, interest_longrid, closeto_latlon):
-    '''
-    this function computes the minimum distance the interest_latlon points are to a list of points given in closeto_latlon.
+# def compute_min_distance(interest_latgrid, interest_longrid, closeto_latlon):
+#     '''
+#     this function computes the minimum distance the interest_latlon points are to a list of points given in closeto_latlon.
     
-    INPUTS:
-        interest_latlon - the 2D list of lat/lon positions that we are interested in checking how close they are to ""something""
+#     INPUTS:
+#         interest_latlon - the 2D list of lat/lon positions that we are interested in checking how close they are to ""something""
             
-        closeto_latlon - the 2D list of lat/lon positions that we define as the ""something"" which we are checking the interest_latlon with respect to
-            dims: [number of positions of interest x 2 (lat, lon in degrees)]
+#         closeto_latlon - the 2D list of lat/lon positions that we define as the ""something"" which we are checking the interest_latlon with respect to
+#             dims: [number of positions of interest x 2 (lat, lon in degrees)]
             
-    OUTPUTS:
-        min_distance - the minimum distance in kilometers
+#     OUTPUTS:
+#         min_distance - the minimum distance in kilometers
 
-            dims: [number of interest lat x number of interet lon]
-    '''
-    # reshape interest_latlon to be a list of points [number of locations x 2]
+#             dims: [number of interest lat x number of interet lon]
+#     '''
+#     # reshape interest_latlon to be a list of points [number of locations x 2]
     
-    interest_lat = np.reshape(interest_latgrid, (-1, 1))
-    interest_lon = np.reshape(interest_longrid, (-1, 1))
+#     interest_lat = np.reshape(interest_latgrid, (-1, 1))
+#     interest_lon = np.reshape(interest_longrid, (-1, 1))
     
-    interest_latlon = np.hstack(interest_lat, interest_lon)
+#     interest_latlon = np.hstack(interest_lat, interest_lon)
     
-    closeto_rotate = np.transpose(closeto_latlon)
-    phi1 = interest_latlon[:, [0]] * np.pi/180
-    phi2 = closeto_rotate[[0], :] * np.pi/180
-    delta1 = interest_latlon[:, [1]] * np.pi/180
-    delta2 = closeto_rotate[[1], :] * np.pi/180
+#     closeto_rotate = np.transpose(closeto_latlon)
+#     phi1 = interest_latlon[:, [0]] * np.pi/180
+#     phi2 = closeto_rotate[[0], :] * np.pi/180
+#     delta1 = interest_latlon[:, [1]] * np.pi/180
+#     delta2 = closeto_rotate[[1], :] * np.pi/180
 
-    # compute the cosine of the angular separation
-    cos_angular_separation = np.sin(phi1) * np.sin(phi2) + np.cos(phi1) * np.cos(phi2) * np.cos(delta1 - delta2)
+#     # compute the cosine of the angular separation
+#     cos_angular_separation = np.sin(phi1) * np.sin(phi2) + np.cos(phi1) * np.cos(phi2) * np.cos(delta1 - delta2)
     
-    # to find the minimum distance, compute the maximum cosine of angular separation
-    # compute across the rows, collapsing to a single column
-    max_cos = np.max(cos_angular_separation, 2)
+#     # to find the minimum distance, compute the maximum cosine of angular separation
+#     # compute across the rows, collapsing to a single column
+#     max_cos = np.max(cos_angular_separation, 2)
 
 def velocity_isclose(secs_latlon, velocity_latlon, tolerance=1, units:str = 'angle'):
     assert units in ("angle", "km")
+    
+    # FIX THIS FUNCTION!
     
     idx = np.zeros(secs_latlon.shape[0], dtype=bool)
     if units == "angle":
